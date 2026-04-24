@@ -1565,6 +1565,7 @@ let graphPan = null;  // {startX, startY, startTx, startTy} while panning backgr
 let graphRestLen = 75;          // updated from avg edge dist on each layout init
 let graphTensionFactor = 0.5;   // multiplier applied to avg edge dist → rest length
 let graphRepulsionFactor = 0.32; // scales the node-node repulsion constant
+let graphShowDegree = false;
 
 function abbrev(name) {
 	if (!name || !name.trim()) return "?";
@@ -1777,6 +1778,16 @@ function stopGraphSim() {
 	saveState();
 }
 
+// Blue (#3b82f6) → Yellow (#facc15) → Red (#ef4444)
+function degreeGradientColor(t) {
+	const stops = [[59,130,246], [250,204,21], [239,68,68]];
+	const s = t * (stops.length - 1);
+	const i = Math.min(Math.floor(s), stops.length - 2);
+	const f = s - i;
+	const [r1,g1,b1] = stops[i], [r2,g2,b2] = stops[i + 1];
+	return `rgb(${Math.round(r1+(r2-r1)*f)},${Math.round(g1+(g2-g1)*f)},${Math.round(b1+(b2-b1)*f)})`;
+}
+
 function renderGraph() {
 	const svg = document.getElementById("graph-svg");
 	if (!svg) return;
@@ -1797,6 +1808,21 @@ function renderGraph() {
 		line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
 		line.setAttribute("class", "gedge");
 		root.appendChild(line);
+	}
+
+	// Degree map (used when overlay is active)
+	const degreeMap = {};
+	let degMin = Infinity, degMax = -Infinity;
+	if (graphShowDegree) {
+		for (const id in graphNodes) degreeMap[id] = 0;
+		for (const e of state.edges) {
+			if (degreeMap[e.a] !== undefined) degreeMap[e.a]++;
+			if (degreeMap[e.b] !== undefined) degreeMap[e.b]++;
+		}
+		for (const id in degreeMap) {
+			if (degreeMap[id] < degMin) degMin = degreeMap[id];
+			if (degreeMap[id] > degMax) degMax = degreeMap[id];
+		}
 	}
 
 	// Nodes — node shapes stay fixed screen-size via counter-scale
@@ -1836,13 +1862,22 @@ function renderGraph() {
 			shape.setAttribute("r", R);
 		}
 		shape.setAttribute("class", "gn-dot");
-		shape.setAttribute("fill", typeColor);
-		shape.setAttribute("stroke", isOwned ? ownerColor : "#444");
-		shape.setAttribute("stroke-width", (isOwned ? 4.5 : 2.0) * isc);
+		if (graphShowDegree) {
+			const td = degMax > degMin
+				? (degreeMap[id] - degMin) / (degMax - degMin)
+				: 0.5;
+			shape.setAttribute("fill", degreeGradientColor(td));
+			shape.setAttribute("stroke", "#2228");
+			shape.setAttribute("stroke-width", 2.0 * isc);
+		} else {
+			shape.setAttribute("fill", typeColor);
+			shape.setAttribute("stroke", isOwned ? ownerColor : "#444");
+			shape.setAttribute("stroke-width", (isOwned ? 4.5 : 2.0) * isc);
+		}
 		g.appendChild(shape);
 
 		// SC indicator — paper-coloured separator ring + owner-coloured inner dot
-		if (t.sc) {
+		if (t.sc && !graphShowDegree) {
 			const sep = document.createElementNS("http://www.w3.org/2000/svg", "circle");
 			sep.setAttribute("r", R * 0.58);
 			sep.setAttribute("fill", "var(--paper)");
@@ -1876,6 +1911,17 @@ function renderGraph() {
 		label.setAttribute("font-size", 14 * isc);
 		label.textContent = t.name || t.id;
 		g.appendChild(label);
+
+		// Degree overlay
+		if (graphShowDegree) {
+			const deg = document.createElementNS("http://www.w3.org/2000/svg", "text");
+			deg.setAttribute("class", "gn-degree");
+			deg.setAttribute("y", R * 0.38);
+			deg.setAttribute("font-size", 11 * isc);
+			deg.setAttribute("stroke-width", 3 * isc);
+			deg.textContent = degreeMap[id] ?? 0;
+			g.appendChild(deg);
+		}
 
 		root.appendChild(g);
 	}
@@ -2047,6 +2093,23 @@ function sectionGraphControls() {
 	const stats = el("div", "hint", `${nT} nodes · ${nE} edges`);
 	stats.style.marginTop = "10px";
 	s.appendChild(stats);
+
+	const degRow = el("div");
+	degRow.style.cssText = "display:flex; align-items:center; gap:6px; margin-top:12px;";
+	const degChk = el("input");
+	degChk.type = "checkbox";
+	degChk.id = "chk-degree";
+	degChk.checked = graphShowDegree;
+	degChk.addEventListener("change", () => {
+		graphShowDegree = degChk.checked;
+		renderGraph();
+	});
+	const degLbl = el("label", null, "Show adjacency count");
+	degLbl.setAttribute("for", "chk-degree");
+	degLbl.style.cursor = "pointer";
+	degRow.appendChild(degChk);
+	degRow.appendChild(degLbl);
+	s.appendChild(degRow);
 
 	return s;
 }

@@ -710,6 +710,18 @@ textarea {
 	stroke: var(--rule);
 	pointer-events: none;
 }
+.gn-degree {
+	font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+	font-weight: 700;
+	fill: var(--paper);
+	paint-order: stroke;
+	stroke: #0006;
+	stroke-linejoin: round;
+	pointer-events: none;
+	user-select: none;
+	text-anchor: middle;
+	dominant-baseline: middle;
+}
 .graph-sim-paused #graph-svg .gedge {
 	opacity: 0.45;
 }
