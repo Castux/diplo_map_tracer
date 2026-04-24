@@ -32,6 +32,11 @@ function getOwnerColor(ownerId) {
 }
 
 function saveState() {
+	const graphNodeData = {};
+	for (const id in graphNodes) {
+		const n = graphNodes[id];
+		graphNodeData[id] = { x: n.x, y: n.y, anchored: n.anchored };
+	}
 	const s = {
 		territories: state.territories,
 		edges: state.edges,
@@ -40,6 +45,11 @@ function saveState() {
 		viewport: state.viewport,
 		imageW: state.imageW,
 		imageH: state.imageH,
+		graph: {
+			tensionFactor: graphTensionFactor,
+			repulsionFactor: graphRepulsionFactor,
+			nodes: graphNodeData,
+		},
 	};
 	try {
 		localStorage.setItem(LS_KEY, JSON.stringify(s));
@@ -68,6 +78,14 @@ function loadState() {
 		state.imageH = s.imageH || 0;
 		const imgData = localStorage.getItem(LS_KEY + "-img");
 		if (imgData) state.image = imgData;
+		if (s.graph) {
+			graphTensionFactor = s.graph.tensionFactor ?? 0.5;
+			graphRepulsionFactor = s.graph.repulsionFactor ?? 0.32;
+			for (const id in (s.graph.nodes || {})) {
+				const nd = s.graph.nodes[id];
+				graphNodes[id] = { x: nd.x, y: nd.y, vx: 0, vy: 0, pinned: false, anchored: !!nd.anchored };
+			}
+		}
 		return true;
 	} catch (e) {
 		console.error("load failed:", e);
@@ -146,6 +164,9 @@ function redo() {
 // =============================================================================
 
 function setMode(m) {
+	const wasGraph = state.mode === "graph";
+	const isGraph = m === "graph";
+
 	state.mode = m;
 	state.pendingEdge = null;
 	document.querySelectorAll(".mode-tabs button").forEach((b) => {
@@ -158,15 +179,35 @@ function setMode(m) {
 			"Click two territories to connect. Drag across an edge to remove it.",
 		ownership:
 			"Pick a power at right, then click territories to assign. Click again to clear.",
+		graph: "Drag nodes to rearrange. Simulation applies spring physics in real time.",
 	};
-	document.getElementById("mode-hint").textContent = hints[m];
+	document.getElementById("mode-hint").textContent = hints[m] || "";
 	document.getElementById("sb-mode").textContent = {
 		territories: "TERR",
 		adjacencies: "ADJ",
 		ownership: "OWN",
-	}[m];
+		graph: "GRAPH",
+	}[m] || m.toUpperCase();
+
+	if (isGraph) {
+		document.getElementById("canvas-wrap").style.display = "none";
+		document.getElementById("graph-view").style.display = "";
+		const hadSavedNodes = Object.keys(graphNodes).length > 0;
+		syncGraphNodes(false);
+		graphRestLen = computeAvgEdgeDist() * graphTensionFactor;
+		if (!hadSavedNodes) pinHullNodes();
+		fitGraphToScreen();
+		startGraphSim();
+	} else {
+		if (wasGraph) {
+			stopGraphSim();
+			document.getElementById("graph-view").style.display = "none";
+			document.getElementById("canvas-wrap").style.display = "";
+		}
+		renderOverlay();
+	}
+
 	renderSidebar();
-	renderOverlay();
 }
 
 // =============================================================================
@@ -213,7 +254,7 @@ function applyTransform() {
 	document.getElementById("sb-zoom").textContent =
 		Math.round(scale * 100) + "%";
 	// Keep markers a consistent screen size across zoom levels
-	document.documentElement.style.setProperty("--marker-r", 6 / scale + "px");
+	document.documentElement.style.setProperty("--marker-r", 8 / scale + "px");
 	renderOverlay(); // marker stroke widths etc may want updating
 }
 
@@ -256,7 +297,7 @@ function renderOverlay() {
 		line.setAttribute("x2", b.x);
 		line.setAttribute("y2", b.y);
 		line.setAttribute("class", "edge");
-		line.setAttribute("stroke-width", Math.max(1.3 * inverseScale, 0.5));
+		line.setAttribute("stroke-width", Math.max(2.0 * inverseScale, 0.7));
 		svg.appendChild(line);
 	}
 	// Pending edge preview
@@ -272,7 +313,7 @@ function renderOverlay() {
 			line.setAttribute("x2", _mouseImg.x);
 			line.setAttribute("y2", _mouseImg.y);
 			line.setAttribute("class", "edge pending");
-			line.setAttribute("stroke-width", 1.8 * inverseScale);
+			line.setAttribute("stroke-width", 2.6 * inverseScale);
 			svg.appendChild(line);
 		}
 	}
@@ -283,7 +324,7 @@ function renderOverlay() {
 		line.setAttribute("x2", _mouseImg.x);
 		line.setAttribute("y2", _mouseImg.y);
 		line.setAttribute("class", "edge erase-sweep");
-		line.setAttribute("stroke-width", 1.5 * inverseScale);
+		line.setAttribute("stroke-width", 2.2 * inverseScale);
 		svg.appendChild(line);
 	}
 
@@ -303,12 +344,12 @@ function renderOverlay() {
 			"circle",
 		);
 		halo.setAttribute("class", "m-halo");
-		halo.setAttribute("r", 11 * inverseScale);
-		halo.setAttribute("stroke-width", 2 * inverseScale);
+		halo.setAttribute("r", 15 * inverseScale);
+		halo.setAttribute("stroke-width", 2.5 * inverseScale);
 		g.appendChild(halo);
 
 		// Type-based shape
-		const r = 6 * inverseScale;
+		const r = 8 * inverseScale;
 		const color = getOwnerColor(t.owner);
 		let shape;
 		if (t.type === "sea") {
@@ -332,7 +373,7 @@ function renderOverlay() {
 		}
 		shape.setAttribute("class", "m-dot");
 		shape.setAttribute("fill", color);
-		shape.setAttribute("stroke-width", 1.4 * inverseScale);
+		shape.setAttribute("stroke-width", 2.0 * inverseScale);
 		g.appendChild(shape);
 
 		// Supply center ring
@@ -344,7 +385,7 @@ function renderOverlay() {
 			);
 			ring.setAttribute("class", "sc-indicator" + (isHome ? " home" : ""));
 			ring.setAttribute("r", r * 1.9);
-			ring.setAttribute("stroke-width", (isHome ? 2 : 1.2) * inverseScale);
+			ring.setAttribute("stroke-width", (isHome ? 2.8 : 1.8) * inverseScale);
 			g.appendChild(ring);
 		}
 
@@ -356,8 +397,8 @@ function renderOverlay() {
 		label.setAttribute("class", "m-label");
 		label.setAttribute("x", r * 2.2);
 		label.setAttribute("y", r * 0.5);
-		label.setAttribute("font-size", 11 * inverseScale);
-		label.setAttribute("stroke-width", 3 * inverseScale);
+		label.setAttribute("font-size", 14 * inverseScale);
+		label.setAttribute("stroke-width", 4 * inverseScale);
 		label.textContent = t.name || `?${id}`;
 		g.appendChild(label);
 
@@ -402,6 +443,8 @@ function renderSidebar() {
 		sb.appendChild(sectionPowers());
 		sb.appendChild(sectionTerritoryList());
 		sb.appendChild(sectionValidation());
+	} else if (state.mode === "graph") {
+		sb.appendChild(sectionGraphControls());
 	}
 }
 
@@ -819,13 +862,25 @@ function sectionPowers() {
 	return s;
 }
 
+function cssToHex(color) {
+	const ctx = document.createElement("canvas").getContext("2d");
+	ctx.fillStyle = color;
+	return ctx.fillStyle; // always normalises to #rrggbb
+}
+
 function openPowerEditor(p) {
 	const bg = el("div", "modal-bg");
 	const m = el("div", "modal");
 	m.innerHTML = `
     <h2>Edit power</h2>
     <div class="field"><label>Name</label><input type="text" id="pe-name" value="${escapeHtml(p.name)}"></div>
-    <div class="field"><label>Color (CSS color or #hex)</label><input type="text" id="pe-color" value="${escapeHtml(p.color)}"></div>
+    <div class="field">
+      <label>Color</label>
+      <div style="display:flex; gap:6px; align-items:center; margin-top:2px;">
+        <input type="color" id="pe-color-pick" value="${escapeHtml(cssToHex(p.color))}">
+        <input type="text" id="pe-color" value="${escapeHtml(p.color)}" style="flex:1">
+      </div>
+    </div>
     <div class="field"><label>Home SC target count (0 for unknown)</label><input type="text" id="pe-count" value="${p.count || 0}"></div>
     <div class="actions">
       <button class="toolbtn danger" id="pe-del">Delete power</button>
@@ -836,27 +891,31 @@ function openPowerEditor(p) {
   `;
 	bg.appendChild(m);
 	document.body.appendChild(bg);
-	m.querySelector("#pe-name").focus();
 
+	const pick = m.querySelector("#pe-color-pick");
+	const txt  = m.querySelector("#pe-color");
+
+	pick.addEventListener("input", () => { txt.value = pick.value; });
+	txt.addEventListener("input", () => {
+		const hex = cssToHex(txt.value);
+		if (hex !== "#000000" || txt.value.trim() === "#000000") pick.value = hex;
+	});
+
+	m.querySelector("#pe-name").focus();
 	m.querySelector("#pe-cancel").onclick = () => bg.remove();
-	bg.onclick = (ev) => {
-		if (ev.target === bg) bg.remove();
-	};
+	bg.onclick = (ev) => { if (ev.target === bg) bg.remove(); };
+
 	m.querySelector("#pe-save").onclick = () => {
 		pushUndo();
 		p.name = m.querySelector("#pe-name").value || p.name;
-		p.color = m.querySelector("#pe-color").value || p.color;
+		p.color = txt.value || p.color;
 		p.count = parseInt(m.querySelector("#pe-count").value) || 0;
 		saveState();
 		bg.remove();
 		renderAll();
 	};
 	m.querySelector("#pe-del").onclick = () => {
-		if (
-			!confirm(
-				`Delete power ${p.name}? Territories owned by it become neutral.`,
-			)
-		)
+		if (!confirm(`Delete power ${p.name}? Territories owned by it become neutral.`))
 			return;
 		pushUndo();
 		for (const t of Object.values(state.territories)) {
@@ -985,6 +1044,7 @@ let _edgeSweepDidRemove = false;
 const wrap = () => document.getElementById("canvas-wrap");
 
 function onMouseMove(e) {
+	if (state.mode === "graph") { onGraphMouseMove(e); return; }
 	const img = clientToImage(e.clientX, e.clientY);
 	_mouseImg = img;
 	document.getElementById("sb-cursor").textContent =
@@ -1074,6 +1134,7 @@ function onMouseDown(e) {
 }
 
 function onMouseUp(e) {
+	if (state.mode === "graph") { onGraphMouseUp(e); return; }
 	if (_panActive) {
 		_panActive = false;
 		wrap().classList.remove("panning");
@@ -1263,6 +1324,7 @@ function onKeyDown(e) {
 	if (e.key === "1") setMode("territories");
 	else if (e.key === "2") setMode("adjacencies");
 	else if (e.key === "3") setMode("ownership");
+	else if (e.key === "4") setMode("graph");
 	else if (e.key === "Escape") {
 		state.pendingEdge = null;
 		state.selectedTerritory = null;
@@ -1370,6 +1432,15 @@ function exportJSON() {
 		};
 	}
 
+	const graphNodesByName = {};
+	for (const id in graphNodes) {
+		const t = state.territories[id];
+		const name = t && (t.name || t.id);
+		if (name) {
+			const n = graphNodes[id];
+			graphNodesByName[name] = { x: Math.round(n.x), y: Math.round(n.y), anchored: n.anchored };
+		}
+	}
 	const out = {
 		variant_name: "Untitled Diplomacy Variant",
 		generated_by: "Diplo Map Tracer",
@@ -1384,6 +1455,11 @@ function exportJSON() {
 		},
 		powers,
 		territories,
+		_graph: {
+			tension_factor: graphTensionFactor,
+			repulsion_factor: graphRepulsionFactor,
+			nodes: graphNodesByName,
+		},
 	};
 
 	const blob = new Blob([JSON.stringify(out, null, 2)], {
@@ -1454,6 +1530,18 @@ function importJSON(obj) {
 				state.edges.push(a < b ? { a, b } : { a: b, b: a });
 			}
 		}
+		// Restore graph view state if present
+		for (const id in graphNodes) delete graphNodes[id];
+		if (obj._graph) {
+			graphTensionFactor = obj._graph.tension_factor ?? 0.5;
+			graphRepulsionFactor = obj._graph.repulsion_factor ?? 0.32;
+			for (const tname in (obj._graph.nodes || {})) {
+				const id = nameToId[tname];
+				if (!id) continue;
+				const nd = obj._graph.nodes[tname];
+				graphNodes[id] = { x: nd.x, y: nd.y, vx: 0, vy: 0, pinned: false, anchored: !!nd.anchored };
+			}
+		}
 	} else {
 		alert(
 			"Unrecognized JSON shape. Expected {territories:{name:{...}}, powers:{...}}.",
@@ -1463,6 +1551,504 @@ function importJSON(obj) {
 
 	saveState();
 	renderAll();
+}
+
+// =============================================================================
+// GRAPH VIEW — force-directed layout
+// =============================================================================
+
+const graphNodes = {}; // id -> {x, y, vx, vy, pinned, anchored}
+const graphSim = { running: false, animId: null };
+const graphViewport = { tx: 0, ty: 0, scale: 1 };
+let graphDrag = null; // {id, x0, y0} while dragging a node
+let graphPan = null;  // {startX, startY, startTx, startTy} while panning background
+let graphRestLen = 75;          // updated from avg edge dist on each layout init
+let graphTensionFactor = 0.5;   // multiplier applied to avg edge dist → rest length
+let graphRepulsionFactor = 0.32; // scales the node-node repulsion constant
+
+function abbrev(name) {
+	if (!name || !name.trim()) return "?";
+	const words = name.trim().split(/\s+/);
+	if (words.length === 1) return name.length <= 5 ? name : name.slice(0, 4);
+	return words.map((w) => w[0].toUpperCase()).join("");
+}
+
+function syncGraphNodes(randomize) {
+	const tArr = Object.values(state.territories);
+	const cx = tArr.reduce((s, t) => s + t.x, 0) / (tArr.length || 1);
+	const cy = tArr.reduce((s, t) => s + t.y, 0) / (tArr.length || 1);
+
+	for (const id in state.territories) {
+		if (!graphNodes[id] || randomize) {
+			const t = state.territories[id];
+			graphNodes[id] = {
+				x: t.x - cx,
+				y: t.y - cy,
+				vx: 0,
+				vy: 0,
+				pinned: false,
+				anchored: false,
+			};
+		}
+	}
+	for (const id in graphNodes) {
+		if (!state.territories[id]) delete graphNodes[id];
+	}
+}
+
+function computeAvgEdgeDist() {
+	let total = 0, count = 0;
+	for (const e of state.edges) {
+		const a = state.territories[e.a], b = state.territories[e.b];
+		if (!a || !b) continue;
+		const dx = a.x - b.x, dy = a.y - b.y;
+		total += Math.sqrt(dx * dx + dy * dy);
+		count++;
+	}
+	return count > 0 ? total / count : 150;
+}
+
+function findOuterRing() {
+	const ids = Object.keys(graphNodes);
+	if (ids.length < 3) return ids.slice();
+
+	// Build adjacency from current edges
+	const adj = {};
+	for (const id of ids) adj[id] = [];
+	for (const e of state.edges) {
+		if (graphNodes[e.a] && graphNodes[e.b]) {
+			adj[e.a].push(e.b);
+			adj[e.b].push(e.a);
+		}
+	}
+
+	const pt = (id) => graphNodes[id];
+	const ang = (from, to) =>
+		Math.atan2(pt(to).y - pt(from).y, pt(to).x - pt(from).x);
+
+	// Leftmost node is guaranteed on the outer face
+	const start = ids.reduce((best, id) =>
+		pt(id).x < pt(best).x ? id : best, ids[0]);
+
+	const ring = [];
+	let cur = start, prevId = null;
+
+	for (let guard = 0; guard <= ids.length + 2; guard++) {
+		ring.push(cur);
+		const neighbors = adj[cur];
+		if (!neighbors.length) break;
+
+		// Angle back toward where we came from (virtual "below" for first step)
+		const backAngle = prevId === null ? Math.PI / 2 : ang(cur, prevId);
+
+		// Pick the neighbor with the smallest clockwise offset from backAngle.
+		// This traces the outer face of the planar embedding (right-hand rule).
+		let best = null, bestOffset = Infinity;
+		for (const nid of neighbors) {
+			let offset = (ang(cur, nid) - backAngle + Math.PI * 2) % (Math.PI * 2);
+			if (offset < 1e-9) offset = Math.PI * 2; // don't reverse
+			if (offset < bestOffset) { bestOffset = offset; best = nid; }
+		}
+
+		if (!best || (best === start && ring.length > 2)) break;
+		prevId = cur;
+		cur = best;
+	}
+
+	return ring; // ordered array forming a connected cycle
+}
+
+function pinHullNodes() {
+	const ring = findOuterRing();
+
+	for (const id in graphNodes) graphNodes[id].anchored = false;
+	for (const id of ring) graphNodes[id].anchored = true;
+
+	// Project every ring node onto a circle at its current geographic angle.
+	// Radius = max distance of any ring node from the centroid (origin in graph-space).
+	let maxR = 0;
+	for (const id of ring) {
+		const n = graphNodes[id];
+		maxR = Math.max(maxR, Math.sqrt(n.x * n.x + n.y * n.y));
+	}
+	if (maxR < 1) maxR = 200;
+
+	const startAngle = Math.atan2(graphNodes[ring[0]].y, graphNodes[ring[0]].x);
+	const step = (Math.PI * 2) / ring.length;
+	for (let i = 0; i < ring.length; i++) {
+		const n = graphNodes[ring[i]];
+		n.x = maxR * Math.cos(startAngle + i * step);
+		n.y = maxR * Math.sin(startAngle + i * step);
+		n.vx = 0;
+		n.vy = 0;
+	}
+}
+
+function fitGraphToScreen() {
+	const svg = document.getElementById("graph-svg");
+	if (!svg) return;
+	const w = svg.clientWidth || 800, h = svg.clientHeight || 600;
+	const ids = Object.keys(graphNodes);
+	if (!ids.length) { graphViewport.tx = w / 2; graphViewport.ty = h / 2; graphViewport.scale = 1; return; }
+
+	let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+	for (const id of ids) {
+		minX = Math.min(minX, graphNodes[id].x);
+		maxX = Math.max(maxX, graphNodes[id].x);
+		minY = Math.min(minY, graphNodes[id].y);
+		maxY = Math.max(maxY, graphNodes[id].y);
+	}
+	const pad = 60;
+	const scaleX = (w - pad * 2) / (maxX - minX || 1);
+	const scaleY = (h - pad * 2) / (maxY - minY || 1);
+	graphViewport.scale = Math.min(scaleX, scaleY, 2);
+	graphViewport.tx = w / 2 - ((minX + maxX) / 2) * graphViewport.scale;
+	graphViewport.ty = h / 2 - ((minY + maxY) / 2) * graphViewport.scale;
+}
+
+function graphTick() {
+	const ids = Object.keys(graphNodes);
+	const REST_LEN = graphRestLen;
+	const REPULSION = graphRepulsionFactor * REST_LEN * REST_LEN;
+	const SPRING_K = 0.045;
+	const DAMP = 0.82;
+	const GRAVITY = 0.004;
+	const MAX_V = 0.12 * REST_LEN;
+
+	// Reset force accumulators
+	for (const id of ids) {
+		graphNodes[id].fx = 0;
+		graphNodes[id].fy = 0;
+	}
+
+	// Pairwise repulsion
+	for (let i = 0; i < ids.length; i++) {
+		for (let j = i + 1; j < ids.length; j++) {
+			const a = graphNodes[ids[i]], b = graphNodes[ids[j]];
+			const dx = a.x - b.x, dy = a.y - b.y;
+			const d2 = Math.max(dx * dx + dy * dy, 400);
+			const d = Math.sqrt(d2);
+			const f = REPULSION / d2;
+			const fx = (f * dx) / d, fy = (f * dy) / d;
+			a.fx += fx; a.fy += fy;
+			b.fx -= fx; b.fy -= fy;
+		}
+	}
+
+	// Spring attraction along edges
+	for (const e of state.edges) {
+		const a = graphNodes[e.a], b = graphNodes[e.b];
+		if (!a || !b) continue;
+		const dx = b.x - a.x, dy = b.y - a.y;
+		const d = Math.sqrt(dx * dx + dy * dy) || 1;
+		const f = SPRING_K * (d - REST_LEN);
+		const fx = (f * dx) / d, fy = (f * dy) / d;
+		a.fx += fx; a.fy += fy;
+		b.fx -= fx; b.fy -= fy;
+	}
+
+	// Integrate (center gravity + damping + velocity clamp)
+	for (const id of ids) {
+		const n = graphNodes[id];
+		if (n.pinned || n.anchored) continue;
+		n.vx = (n.vx + n.fx - n.x * GRAVITY) * DAMP;
+		n.vy = (n.vy + n.fy - n.y * GRAVITY) * DAMP;
+		const v = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+		if (v > MAX_V) { n.vx = (n.vx / v) * MAX_V; n.vy = (n.vy / v) * MAX_V; }
+		n.x += n.vx;
+		n.y += n.vy;
+	}
+
+	renderGraph();
+	if (graphSim.running) graphSim.animId = requestAnimationFrame(graphTick);
+}
+
+function startGraphSim() {
+	if (graphSim.running) return;
+	graphSim.running = true;
+	document.getElementById("graph-view").classList.remove("graph-sim-paused");
+	graphSim.animId = requestAnimationFrame(graphTick);
+}
+
+function stopGraphSim() {
+	graphSim.running = false;
+	if (graphSim.animId) { cancelAnimationFrame(graphSim.animId); graphSim.animId = null; }
+	document.getElementById("graph-view").classList.add("graph-sim-paused");
+	saveState();
+}
+
+function renderGraph() {
+	const svg = document.getElementById("graph-svg");
+	if (!svg) return;
+	const w = svg.clientWidth || 800, h = svg.clientHeight || 600;
+
+	while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+	const root = document.createElementNS("http://www.w3.org/2000/svg", "g");
+	const { tx, ty, scale } = graphViewport;
+	root.setAttribute("transform", `translate(${tx},${ty}) scale(${scale})`);
+
+	// Edges
+	for (const e of state.edges) {
+		const a = graphNodes[e.a], b = graphNodes[e.b];
+		if (!a || !b) continue;
+		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+		line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+		line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+		line.setAttribute("class", "gedge");
+		root.appendChild(line);
+	}
+
+	// Nodes — node shapes stay fixed screen-size via counter-scale
+	const isc = 1 / scale; // inverse scale for screen-constant elements
+	for (const id in graphNodes) {
+		const t = state.territories[id];
+		if (!t) continue;
+		const n = graphNodes[id];
+		const R = 13 * isc;
+		const typeColor = t.type === "sea" ? "var(--accent-2)" : "var(--rule)";
+		const ownerColor = getOwnerColor(t.owner);
+		const isOwned = t.owner && t.owner !== "neutral";
+
+		const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+		g.setAttribute("class", "gnode" +
+			(n.anchored ? " anchored" : "") +
+			(graphDrag && graphDrag.id === id ? " dragging" : ""));
+		g.setAttribute("transform", `translate(${n.x},${n.y})`);
+		g.dataset.id = id;
+
+		// Invisible hit area
+		const hit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+		hit.setAttribute("r", 26 * isc); hit.setAttribute("class", "gn-hit");
+		g.appendChild(hit);
+
+		// Type-based shape
+		let shape;
+		if (t.type === "sea") {
+			shape = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+			shape.setAttribute("points", `0,${-R * 1.3} ${R * 1.3},0 0,${R * 1.3} ${-R * 1.3},0`);
+		} else if (t.type === "land") {
+			shape = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+			shape.setAttribute("x", -R); shape.setAttribute("y", -R);
+			shape.setAttribute("width", R * 2); shape.setAttribute("height", R * 2);
+		} else {
+			shape = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+			shape.setAttribute("r", R);
+		}
+		shape.setAttribute("class", "gn-dot");
+		shape.setAttribute("fill", typeColor);
+		shape.setAttribute("stroke", isOwned ? ownerColor : "#444");
+		shape.setAttribute("stroke-width", (isOwned ? 4.5 : 2.0) * isc);
+		g.appendChild(shape);
+
+		// SC indicator — paper-coloured separator ring + owner-coloured inner dot
+		if (t.sc) {
+			const sep = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+			sep.setAttribute("r", R * 0.58);
+			sep.setAttribute("fill", "var(--paper)");
+			sep.setAttribute("stroke", "none");
+			sep.setAttribute("pointer-events", "none");
+			g.appendChild(sep);
+
+			const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+			dot.setAttribute("class", "gn-sc-dot");
+			dot.setAttribute("r", R * 0.46);
+			dot.setAttribute("fill", ownerColor);
+			dot.setAttribute("stroke", "#0003");
+			dot.setAttribute("stroke-width", 0.8 * isc);
+			g.appendChild(dot);
+		}
+
+		// Anchor ring for pinned hull nodes
+		if (n.anchored) {
+			const ar = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+			ar.setAttribute("class", "gn-anchor-ring");
+			ar.setAttribute("r", R * 2.2);
+			ar.setAttribute("stroke-width", 1.2 * isc);
+			ar.setAttribute("stroke-dasharray", `${3.5 * isc} ${2.5 * isc}`);
+			g.appendChild(ar);
+		}
+
+		// Label below node
+		const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+		label.setAttribute("class", "gn-label");
+		label.setAttribute("y", R + 18 * isc);
+		label.setAttribute("font-size", 14 * isc);
+		label.textContent = t.name || t.id;
+		g.appendChild(label);
+
+		root.appendChild(g);
+	}
+
+	svg.appendChild(root);
+}
+
+function svgToGraph(clientX, clientY) {
+	const svg = document.getElementById("graph-svg");
+	const rect = svg.getBoundingClientRect();
+	return {
+		x: (clientX - rect.left - graphViewport.tx) / graphViewport.scale,
+		y: (clientY - rect.top  - graphViewport.ty) / graphViewport.scale,
+	};
+}
+
+function onGraphMouseDown(e) {
+	if (e.button !== 0) return;
+	e.preventDefault();
+	const g = e.target.closest(".gnode");
+	if (g) {
+		const id = g.dataset.id;
+		if (!id || !graphNodes[id]) return;
+		e.stopPropagation();
+		graphDrag = { id, x0: graphNodes[id].x, y0: graphNodes[id].y };
+		graphNodes[id].pinned = true;
+		graphNodes[id].vx = 0;
+		graphNodes[id].vy = 0;
+	} else {
+		graphPan = { startX: e.clientX, startY: e.clientY, startTx: graphViewport.tx, startTy: graphViewport.ty };
+		document.getElementById("graph-svg").classList.add("panning");
+	}
+	if (!graphSim.running) renderGraph();
+}
+
+function onGraphMouseMove(e) {
+	if (graphDrag) {
+		const n = graphNodes[graphDrag.id];
+		if (!n) return;
+		const pos = svgToGraph(e.clientX, e.clientY);
+		n.x = pos.x;
+		n.y = pos.y;
+		if (!graphSim.running) renderGraph();
+	} else if (graphPan) {
+		graphViewport.tx = graphPan.startTx + (e.clientX - graphPan.startX);
+		graphViewport.ty = graphPan.startTy + (e.clientY - graphPan.startY);
+		if (!graphSim.running) renderGraph();
+	}
+}
+
+function onGraphMouseUp() {
+	if (graphDrag) {
+		const n = graphNodes[graphDrag.id];
+		if (n) {
+			const dx = n.x - graphDrag.x0, dy = n.y - graphDrag.y0;
+			if (dx * dx + dy * dy < 16 / (graphViewport.scale * graphViewport.scale))
+				n.anchored = !n.anchored; // click → toggle
+			n.pinned = false;
+			n.vx = 0;
+			n.vy = 0;
+		}
+		graphDrag = null;
+		saveState();
+	}
+	if (graphPan) {
+		graphPan = null;
+		document.getElementById("graph-svg").classList.remove("panning");
+	}
+	if (!graphSim.running) renderGraph();
+}
+
+function onGraphWheel(e) {
+	e.preventDefault();
+	const svg = document.getElementById("graph-svg");
+	const rect = svg.getBoundingClientRect();
+	const mx = e.clientX - rect.left;
+	const my = e.clientY - rect.top;
+	const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+	const newScale = Math.max(0.08, Math.min(8, graphViewport.scale * factor));
+	graphViewport.tx = mx - (mx - graphViewport.tx) * (newScale / graphViewport.scale);
+	graphViewport.ty = my - (my - graphViewport.ty) * (newScale / graphViewport.scale);
+	graphViewport.scale = newScale;
+	if (!graphSim.running) renderGraph();
+}
+
+function sectionGraphControls() {
+	const s = el("div", "sb-section");
+	s.appendChild(el("h3", null, "Graph View"));
+
+	const desc = el("div", "hint", "Outer hull nodes are anchored (dashed ring). Click any node to toggle. Drag to move.");
+	desc.style.marginBottom = "14px";
+	s.appendChild(desc);
+
+	const btnReset = el("button", "toolbtn");
+	btnReset.textContent = "Reset Layout";
+	btnReset.style.cssText = "width:100%; margin-bottom:6px; display:block;";
+	btnReset.onclick = () => {
+		syncGraphNodes(true);
+		graphRestLen = computeAvgEdgeDist() * graphTensionFactor;
+		pinHullNodes();
+		fitGraphToScreen();
+		if (!graphSim.running) startGraphSim();
+		else renderGraph();
+		renderSidebar();
+	};
+	s.appendChild(btnReset);
+
+	const btnPause = el("button", "toolbtn");
+	btnPause.textContent = graphSim.running ? "Pause Simulation" : "Resume Simulation";
+	btnPause.style.cssText = "width:100%; display:block;";
+	btnPause.onclick = () => {
+		if (graphSim.running) stopGraphSim();
+		else startGraphSim();
+		btnPause.textContent = graphSim.running ? "Pause Simulation" : "Resume Simulation";
+	};
+	s.appendChild(btnPause);
+
+	const sliderWrap = el("div", "field");
+	sliderWrap.style.marginTop = "14px";
+	const sliderHeader = el("div");
+	sliderHeader.style.cssText = "display:flex; justify-content:space-between; margin-bottom:4px;";
+	sliderHeader.appendChild(el("label", null, "Spring length"));
+	const sliderVal = el("span", "hint");
+	sliderVal.textContent = graphTensionFactor.toFixed(2) + "×";
+	sliderHeader.appendChild(sliderVal);
+	sliderWrap.appendChild(sliderHeader);
+	const slider = el("input");
+	slider.type = "range";
+	slider.min = "0.1";
+	slider.max = "1.5";
+	slider.step = "0.05";
+	slider.value = graphTensionFactor;
+	slider.style.width = "100%";
+	slider.addEventListener("input", () => {
+		graphTensionFactor = parseFloat(slider.value);
+		sliderVal.textContent = graphTensionFactor.toFixed(2) + "×";
+		graphRestLen = computeAvgEdgeDist() * graphTensionFactor;
+		saveState();
+	});
+	sliderWrap.appendChild(slider);
+	s.appendChild(sliderWrap);
+
+	const repWrap = el("div", "field");
+	repWrap.style.marginTop = "10px";
+	const repHeader = el("div");
+	repHeader.style.cssText = "display:flex; justify-content:space-between; margin-bottom:4px;";
+	repHeader.appendChild(el("label", null, "Repulsion"));
+	const repVal = el("span", "hint");
+	repVal.textContent = graphRepulsionFactor.toFixed(2) + "×";
+	repHeader.appendChild(repVal);
+	repWrap.appendChild(repHeader);
+	const repSlider = el("input");
+	repSlider.type = "range";
+	repSlider.min = "0.05";
+	repSlider.max = "2.0";
+	repSlider.step = "0.05";
+	repSlider.value = graphRepulsionFactor;
+	repSlider.style.width = "100%";
+	repSlider.addEventListener("input", () => {
+		graphRepulsionFactor = parseFloat(repSlider.value);
+		repVal.textContent = graphRepulsionFactor.toFixed(2) + "×";
+		saveState();
+	});
+	repWrap.appendChild(repSlider);
+	s.appendChild(repWrap);
+
+	const nT = Object.keys(state.territories).length;
+	const nE = state.edges.length;
+	const stats = el("div", "hint", `${nT} nodes · ${nE} edges`);
+	stats.style.marginTop = "10px";
+	s.appendChild(stats);
+
+	return s;
 }
 
 // =============================================================================
@@ -1551,8 +2137,11 @@ function init() {
 	document.addEventListener("mousemove", onMouseMove);
 	document.addEventListener("mouseup", onMouseUp);
 	cw.addEventListener("wheel", onWheel, { passive: false });
+	document.getElementById("graph-svg").addEventListener("mousedown", onGraphMouseDown);
+	document.getElementById("graph-svg").addEventListener("wheel", onGraphWheel, { passive: false });
 	window.addEventListener("keydown", onKeyDown);
 	window.addEventListener("keyup", onKeyUp);
+	window.addEventListener("beforeunload", saveState);
 
 	window.addEventListener("resize", () => {
 		if (state.imageW) applyTransform();
@@ -1590,7 +2179,7 @@ function toggleHelp() {
     <button class="close">×</button>
     <h4>Keyboard</h4>
     <table style="border-collapse:collapse; font-size:12px;">
-      <tr><td style="padding:2px 10px 2px 0"><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd></td><td>Mode: Terr / Adj / Own</td></tr>
+      <tr><td style="padding:2px 10px 2px 0"><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd></td><td>Mode: Terr / Adj / Own / Graph</td></tr>
       <tr><td><kbd>Space</kbd>+drag</td><td>Pan the map</td></tr>
       <tr><td>Scroll</td><td>Zoom (toward cursor)</td></tr>
       <tr><td><kbd>F</kbd></td><td>Fit map to screen</td></tr>

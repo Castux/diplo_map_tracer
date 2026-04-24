@@ -9,7 +9,7 @@
 	--ok: #3a6b3a;
 	--warn: #a66a1a;
 	--err: #8b2e2e;
-	--marker-r: 6px;
+	--marker-r: 8px;
 }
 * {
 	box-sizing: border-box;
@@ -603,6 +603,15 @@ kbd {
 	justify-content: flex-end;
 	margin-top: 16px;
 }
+.modal input[type="color"] {
+	width: 36px;
+	height: 30px;
+	padding: 2px;
+	border: 1px solid var(--rule);
+	background: var(--paper);
+	cursor: pointer;
+	flex-shrink: 0;
+}
 
 /* Small helpers */
 .small-btn {
@@ -631,4 +640,76 @@ textarea {
 	font-family: "JetBrains Mono", monospace;
 	font-size: 11px;
 	resize: vertical;
+}
+
+/* Graph view */
+#graph-view {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	background:
+		repeating-linear-gradient(
+			0deg,
+			transparent 0 19px,
+			rgba(138, 122, 90, 0.06) 19px 20px
+		),
+		repeating-linear-gradient(
+			90deg,
+			transparent 0 19px,
+			rgba(138, 122, 90, 0.06) 19px 20px
+		),
+		var(--paper);
+}
+#graph-svg {
+	width: 100%;
+	height: 100%;
+	display: block;
+	cursor: grab;
+}
+#graph-svg.panning {
+	cursor: grabbing;
+}
+.gedge {
+	stroke: #444;
+	stroke-width: 2.5;
+	opacity: 0.55;
+	pointer-events: none;
+}
+.gnode {
+	cursor: grab;
+	user-select: none;
+}
+.gnode.dragging {
+	cursor: grabbing;
+}
+.gn-hit {
+	fill: transparent;
+	stroke: none;
+}
+.gn-dot {
+	stroke: #333;
+	stroke-width: 1.4;
+}
+.gn-sc-dot {
+	pointer-events: none;
+}
+.gn-label {
+	font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+	font-size: 14px;
+	fill: #111;
+	paint-order: stroke;
+	stroke: var(--paper);
+	stroke-width: 5px;
+	stroke-linejoin: round;
+	pointer-events: none;
+	user-select: none;
+	text-anchor: middle;
+}
+.gn-anchor-ring {
+	fill: none;
+	stroke: var(--rule);
+	pointer-events: none;
+}
+.graph-sim-paused #graph-svg .gedge {
+	opacity: 0.45;
 }
