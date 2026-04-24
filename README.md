@@ -37,7 +37,6 @@ Drag markers to reposition them. Delete with **Delete** / **Backspace** (asks fo
 Draw connections between territories representing which ones border each other.
 
 - **Single pair**: click territory A, then territory B to connect them.
-- **Neighbor sweep**: **Shift+click** a territory to fix it as the anchor, then click other territories to connect each of them to the anchor. Press **Esc** to stop sweeping.
 - **Remove edges**: click-drag across an existing edge line to delete it.
 
 ### 3 — Ownership

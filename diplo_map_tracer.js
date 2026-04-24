@@ -16,7 +16,6 @@ let state = {
 	powers: [...DEFAULT_POWERS], // user-editable list
 	selectedTerritory: null, // id
 	pendingEdge: null, // id of first territory clicked in adjacencies mode
-	sweepFrom: null, // id — if set, every click adds edge from this
 	selectedPower: null, // powerId currently being painted in ownership mode
 	mode: "territories",
 	viewport: { tx: 0, ty: 0, scale: 1 },
@@ -119,7 +118,6 @@ function undo() {
 	nextTerritoryId = s.nextTerritoryId;
 	state.selectedTerritory = null;
 	state.pendingEdge = null;
-	state.sweepFrom = null;
 	saveState();
 	renderAll();
 }
@@ -150,7 +148,6 @@ function redo() {
 function setMode(m) {
 	state.mode = m;
 	state.pendingEdge = null;
-	state.sweepFrom = null;
 	document.querySelectorAll(".mode-tabs button").forEach((b) => {
 		b.classList.toggle("active", b.dataset.mode === m);
 	});
@@ -158,7 +155,7 @@ function setMode(m) {
 		territories:
 			"Click map to place. Click marker to edit. Drag marker to move.",
 		adjacencies:
-			"Click two territories to connect. Shift-click to start a neighbor sweep (Esc to finish).",
+			"Click two territories to connect. Drag across an edge to remove it.",
 		ownership:
 			"Pick a power at right, then click territories to assign. Click again to clear.",
 	};
@@ -276,26 +273,6 @@ function renderOverlay() {
 			line.setAttribute("y2", _mouseImg.y);
 			line.setAttribute("class", "edge pending");
 			line.setAttribute("stroke-width", 1.8 * inverseScale);
-			svg.appendChild(line);
-		}
-	}
-	if (state.sweepFrom) {
-		const a = state.territories[state.sweepFrom];
-		if (a && _mouseImg) {
-			const line = document.createElementNS(
-				"http://www.w3.org/2000/svg",
-				"line",
-			);
-			line.setAttribute("x1", a.x);
-			line.setAttribute("y1", a.y);
-			line.setAttribute("x2", _mouseImg.x);
-			line.setAttribute("y2", _mouseImg.y);
-			line.setAttribute("class", "edge pending");
-			line.setAttribute("stroke-width", 1.8 * inverseScale);
-			line.setAttribute(
-				"stroke-dasharray",
-				`${4 * inverseScale} ${2 * inverseScale}`,
-			);
 			svg.appendChild(line);
 		}
 	}
@@ -681,22 +658,9 @@ function sectionAdjacencyHelp() {
 	info.style.lineHeight = "1.6";
 	info.innerHTML = `
     <p style="margin:0 0 6px"><b>Single pair:</b> click A, then B.</p>
-    <p style="margin:0 0 6px"><b>Neighbor sweep:</b> hold <kbd>Shift</kbd> and click A to fix it. Every click after adds A↔X. Press <kbd>Esc</kbd> to stop.</p>
     <p style="margin:0 0 6px"><b>Remove edge:</b> click-drag across an edge line, or use the selected-territory list below.</p>
   `;
 	s.appendChild(info);
-
-	if (state.sweepFrom) {
-		const t = state.territories[state.sweepFrom];
-		const banner = el("div");
-		banner.style.marginTop = "8px";
-		banner.style.padding = "6px 8px";
-		banner.style.background = "var(--accent)";
-		banner.style.color = "var(--paper)";
-		banner.style.fontSize = "12px";
-		banner.textContent = `Sweeping from: ${t.name || t.id}. Click neighbors. Esc to stop.`;
-		s.appendChild(banner);
-	}
 
 	return s;
 }
@@ -1013,7 +977,6 @@ let _panStart = null;
 let _panActive = false;
 let _dragMarker = null;
 let _spaceHeld = false;
-let _shiftHeld = false;
 let _edgeSweepActive = false;
 let _edgeSweepStart = null; // image coords of last processed point (advances each move)
 let _edgeSweepOrigin = null; // image coords where sweep began (for visual)
@@ -1075,8 +1038,7 @@ function onMouseMove(e) {
 		renderOverlay();
 		return;
 	}
-	// Hover updates for pending edges/sweep
-	if (state.mode === "adjacencies" && (state.pendingEdge || state.sweepFrom)) {
+	if (state.mode === "adjacencies" && state.pendingEdge) {
 		renderOverlay();
 	}
 }
@@ -1100,12 +1062,7 @@ function onMouseDown(e) {
 	if (target) {
 		handleMarkerClick(target, e);
 	} else {
-		if (
-			state.mode === "adjacencies" &&
-			!state.pendingEdge &&
-			!state.sweepFrom &&
-			!e.shiftKey
-		) {
+		if (state.mode === "adjacencies" && !state.pendingEdge) {
 			_edgeSweepActive = true;
 			_edgeSweepStart = clientToImage(e.clientX, e.clientY);
 			_edgeSweepOrigin = { ..._edgeSweepStart };
@@ -1178,19 +1135,6 @@ function handleMarkerClick(id, e) {
 		_dragMarker = id;
 		renderAll();
 	} else if (state.mode === "adjacencies") {
-		// Sweep logic: shift+click sets/releases sweep anchor
-		if (e.shiftKey) {
-			state.sweepFrom = state.sweepFrom === id ? null : id;
-			state.pendingEdge = null;
-			state.selectedTerritory = id;
-			renderAll();
-			return;
-		}
-		if (state.sweepFrom) {
-			if (id !== state.sweepFrom) addEdge(state.sweepFrom, id);
-			renderAll();
-			return;
-		}
 		if (!state.pendingEdge) {
 			state.pendingEdge = id;
 			state.selectedTerritory = id;
@@ -1240,7 +1184,6 @@ function handleEmptyClick(e) {
 		saveState();
 		renderAll();
 	} else if (state.mode === "adjacencies") {
-		// Click on empty space cancels pending edge but keeps sweep
 		if (state.pendingEdge) {
 			state.pendingEdge = null;
 			renderAll();
@@ -1305,8 +1248,6 @@ function onKeyDown(e) {
 		wrap().classList.add("pan-ready");
 		return;
 	}
-	if (e.key === "Shift") _shiftHeld = true;
-
 	if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
 		e.preventDefault();
 		if (e.shiftKey) redo();
@@ -1324,7 +1265,6 @@ function onKeyDown(e) {
 	else if (e.key === "3") setMode("ownership");
 	else if (e.key === "Escape") {
 		state.pendingEdge = null;
-		state.sweepFrom = null;
 		state.selectedTerritory = null;
 		renderAll();
 	} else if (e.key === "f") {
@@ -1378,7 +1318,6 @@ function onKeyUp(e) {
 		_spaceHeld = false;
 		wrap().classList.remove("pan-ready");
 	}
-	if (e.key === "Shift") _shiftHeld = false;
 }
 
 // =============================================================================
@@ -1601,7 +1540,6 @@ function init() {
 		nextTerritoryId = 1;
 		state.selectedTerritory = null;
 		state.pendingEdge = null;
-		state.sweepFrom = null;
 		state.selectedPower = null;
 		saveState();
 		renderAll();
@@ -1663,8 +1601,7 @@ function toggleHelp() {
       <tr><td><kbd>L</kbd> / <kbd>C</kbd> / <kbd>s</kbd></td><td>Set type: Land / Coast / Sea</td></tr>
       <tr><td><kbd>Shift</kbd>+<kbd>S</kbd></td><td>Toggle supply center</td></tr>
       <tr><td colspan="2" style="padding-top:10px; font-weight:600">Adjacency mode</td></tr>
-      <tr><td><kbd>Shift</kbd>+click</td><td>Start neighbor sweep</td></tr>
-      <tr><td><kbd>Esc</kbd></td><td>Stop sweep</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Cancel pending edge</td></tr>
       <tr><td colspan="2" style="padding-top:10px; font-weight:600">Ownership mode</td></tr>
       <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>Select power (via list order)</td></tr>
       <tr><td><kbd>0</kbd></td><td>Deselect power</td></tr>
