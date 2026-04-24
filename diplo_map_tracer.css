@@ -247,9 +247,24 @@ kbd {
 /* SVG elements */
 .edge {
 	stroke: #333;
-	stroke-width: 1.3;
 	opacity: 0.7;
 	pointer-events: none;
+}
+.edge.edge-army {
+	stroke: #a06030;
+	opacity: 0.75;
+}
+.edge.edge-fleet {
+	stroke: #2060b0;
+	opacity: 0.75;
+}
+.edge.edge-selected {
+	opacity: 1;
+	stroke: var(--accent);
+}
+.edge-hit {
+	cursor: pointer;
+	pointer-events: stroke;
 }
 .edge.hover {
 	stroke: var(--accent);
@@ -550,6 +565,10 @@ kbd {
 .v-err {
 	color: var(--err);
 }
+.v-info {
+	color: var(--rule);
+	opacity: 0.7;
+}
 .v-line {
 	margin: 2px 0;
 }
@@ -662,9 +681,6 @@ textarea {
 	cursor: grabbing;
 }
 .gedge {
-	stroke: #444;
-	stroke-width: 2.5;
-	opacity: 0.55;
 	pointer-events: none;
 }
 .gnode {
@@ -715,5 +731,5 @@ textarea {
 	dominant-baseline: middle;
 }
 .graph-sim-paused #graph-svg .gedge {
-	opacity: 0.45;
+	opacity: 0.5;
 }

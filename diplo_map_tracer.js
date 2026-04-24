@@ -11,11 +11,12 @@ let state = {
 	image: null, // data URL (not persisted)
 	imageW: 0,
 	imageH: 0,
-	territories: {}, // id -> {id, name, x, y, type: 'land'|'coast'|'sea', sc: bool, owner: powerId, coasts: ['nc','sc','ec','wc']}
-	edges: [], // [{a, b}]  with a < b lex
+	territories: {}, // id -> {id, name, x, y, type: 'land'|'coast'|'sea', sc: bool, owner: powerId}
+	edges: [], // [{a, b, type: 'army'|'fleet'|'both'}]
 	powers: [...DEFAULT_POWERS], // user-editable list
 	selectedTerritory: null, // id
 	pendingEdge: null, // id of first territory clicked in adjacencies mode
+	selectedEdge: null, // {a, b} edge selected in adjacencies mode
 	selectedPower: null, // powerId currently being painted in ownership mode
 	mode: "territories",
 	viewport: { tx: 0, ty: 0, scale: 1 },
@@ -171,6 +172,7 @@ function setMode(m) {
 
 	state.mode = m;
 	state.pendingEdge = null;
+	state.selectedEdge = null;
 	document.querySelectorAll(".mode-tabs button").forEach((b) => {
 		b.classList.toggle("active", b.dataset.mode === m);
 	});
@@ -293,13 +295,47 @@ function renderOverlay() {
 		const a = state.territories[e.a],
 			b = state.territories[e.b];
 		if (!a || !b) continue;
+		const edgeType = e.type || "both";
+		const isSelected = state.selectedEdge &&
+			state.selectedEdge.a === e.a && state.selectedEdge.b === e.b;
+
+		// Wide invisible hit area for clicking
+		const hit = document.createElementNS("http://www.w3.org/2000/svg", "line");
+		hit.setAttribute("x1", a.x); hit.setAttribute("y1", a.y);
+		hit.setAttribute("x2", b.x); hit.setAttribute("y2", b.y);
+		hit.setAttribute("stroke", "rgba(0,0,0,0.01)");
+		hit.setAttribute("stroke-width", 12 * inverseScale);
+		hit.setAttribute("class", "edge-hit");
+		hit.dataset.a = e.a; hit.dataset.b = e.b;
+		hit.addEventListener("mousedown", (ev) => {
+			if (state.mode !== "adjacencies") return;
+			ev.stopPropagation(); // prevent sweep from starting
+		});
+		hit.addEventListener("click", (ev) => {
+			if (state.mode !== "adjacencies") return;
+			ev.stopPropagation();
+			const same = state.selectedEdge &&
+				state.selectedEdge.a === e.a && state.selectedEdge.b === e.b;
+			state.selectedEdge = same ? null : { a: e.a, b: e.b };
+			state.pendingEdge = null;
+			renderAll();
+		});
+		svg.appendChild(hit);
+
+		// Visible line
 		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-		line.setAttribute("x1", a.x);
-		line.setAttribute("y1", a.y);
-		line.setAttribute("x2", b.x);
-		line.setAttribute("y2", b.y);
-		line.setAttribute("class", "edge");
-		line.setAttribute("stroke-width", Math.max(2.0 * inverseScale, 0.7));
+		line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+		line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+		const sw = Math.max(4.0 * inverseScale, 1.2);
+		line.setAttribute("stroke-width", sw);
+		const cls = "edge" +
+			(edgeType === "army" ? " edge-army" : edgeType === "fleet" ? " edge-fleet" : "") +
+			(isSelected ? " edge-selected" : "");
+		line.setAttribute("class", cls);
+		if (edgeType === "army")
+			line.setAttribute("stroke-dasharray", `${6 * inverseScale} ${4 * inverseScale}`);
+		else if (edgeType === "fleet")
+			line.setAttribute("stroke-dasharray", `${2 * inverseScale} ${3 * inverseScale}`);
 		svg.appendChild(line);
 	}
 	// Pending edge preview
@@ -439,6 +475,7 @@ function renderSidebar() {
 		sb.appendChild(sectionValidation());
 	} else if (state.mode === "adjacencies") {
 		sb.appendChild(sectionAdjacencyHelp());
+		sb.appendChild(sectionSelectedEdge());
 		sb.appendChild(sectionSelectedAdjacencies());
 		sb.appendChild(sectionTerritoryList());
 	} else if (state.mode === "ownership") {
@@ -523,7 +560,7 @@ function sectionTerritoryEditor() {
 		r.addEventListener("change", () => {
 			pushUndo();
 			t.type = val;
-			if (val !== "coast") t.coasts = [];
+	
 			if (val === "sea") {
 				t.owner = null;
 				t.sc = false;
@@ -538,32 +575,6 @@ function sectionTerritoryEditor() {
 	}
 	typeF.appendChild(typeRow);
 	s.appendChild(typeF);
-
-	// Multi-coasts (if coast)
-	if (t.type === "coast") {
-		const cf = el("div", "field");
-		cf.appendChild(el("label", null, "Multi-coasts (optional)"));
-		const cw = el("div", "coasts-editor");
-		for (const c of ["nc", "sc", "ec", "wc"]) {
-			const chip = el(
-				"span",
-				"coast-chip" + ((t.coasts || []).includes(c) ? " on" : ""),
-				c.toUpperCase(),
-			);
-			chip.addEventListener("click", () => {
-				pushUndo();
-				t.coasts = t.coasts || [];
-				const i = t.coasts.indexOf(c);
-				if (i >= 0) t.coasts.splice(i, 1);
-				else t.coasts.push(c);
-				saveState();
-				renderSidebar();
-			});
-			cw.appendChild(chip);
-		}
-		cf.appendChild(cw);
-		s.appendChild(cf);
-	}
 
 	// Supply center
 	if (t.type !== "sea") {
@@ -707,6 +718,24 @@ function sectionAdjacencyHelp() {
   `;
 	s.appendChild(info);
 
+	const fixable = state.edges.filter(e => {
+		const ta = state.territories[e.a]?.type, tb = state.territories[e.b]?.type;
+		if (ta === "coast" && tb === "coast") return false; // ambiguous
+		return (e.type || "both") !== inferEdgeType(e.a, e.b);
+	});
+	if (fixable.length) {
+		const btn = el("button", "toolbtn");
+		btn.textContent = `Fix ${fixable.length} edge${fixable.length > 1 ? "s" : ""} to inferred type`;
+		btn.style.cssText = "width:100%; margin-top:6px;";
+		btn.addEventListener("click", () => {
+			pushUndo();
+			for (const e of fixable) e.type = inferEdgeType(e.a, e.b);
+			saveState();
+			renderAll();
+		});
+		s.appendChild(btn);
+	}
+
 	return s;
 }
 
@@ -754,6 +783,52 @@ function sectionSelectedAdjacencies() {
 		}
 	}
 	s.appendChild(list);
+	return s;
+}
+
+function sectionSelectedEdge() {
+	const s = el("div", "sb-section");
+	s.appendChild(el("h3", null, "Selected edge"));
+	const e = state.selectedEdge;
+	if (!e) {
+		s.appendChild(el("div", "empty", "Click an edge to select it."));
+		return s;
+	}
+	const ta = state.territories[e.a], tb = state.territories[e.b];
+	if (!ta || !tb) return s;
+	const edge = state.edges.find(ed => ed.a === e.a && ed.b === e.b);
+	if (!edge) return s;
+
+	const desc = el("div");
+	desc.style.cssText = "font-size:12px; margin-bottom:10px; line-height:1.5;";
+	desc.textContent = `${ta.name || "(unnamed)"} — ${tb.name || "(unnamed)"}`;
+	s.appendChild(desc);
+
+	const inferred = inferEdgeType(e.a, e.b);
+	const hint = el("div", "hint");
+	hint.style.marginBottom = "8px";
+	hint.textContent = `Inferred: ${inferred}`;
+	s.appendChild(hint);
+
+	const btnRow = el("div");
+	btnRow.style.cssText = "display:flex; gap:6px;";
+	for (const type of ["army", "both", "fleet"]) {
+		const btn = el("button", "toolbtn");
+		btn.textContent = type;
+		btn.style.flex = "1";
+		if (edge.type === type) {
+			btn.style.background = "var(--ink)";
+			btn.style.color = "var(--paper)";
+		}
+		btn.addEventListener("click", () => {
+			pushUndo();
+			edge.type = type;
+			saveState();
+			renderAll();
+		});
+		btnRow.appendChild(btn);
+	}
+	s.appendChild(btnRow);
 	return s;
 }
 
@@ -983,22 +1058,35 @@ function validate() {
 			issues.push({ sev: "err", msg: `Sea "${t.name}" has owner/SC` });
 		}
 	}
-	// Sea↔land direct (without coast) warning
+	// Edge type consistency
 	for (const e of state.edges) {
-		const a = state.territories[e.a],
-			b = state.territories[e.b];
+		const a = state.territories[e.a], b = state.territories[e.b];
 		if (!a || !b) {
 			issues.push({ sev: "err", msg: `Dangling edge ${e.a}↔${e.b}` });
 			continue;
 		}
-		if (
-			(a.type === "sea" && b.type === "land") ||
-			(a.type === "land" && b.type === "sea")
-		) {
-			issues.push({
-				sev: "warn",
-				msg: `${a.name}(land) ↔ ${b.name}(sea) — should one be coast?`,
-			});
+		const type = e.type || "both";
+		const na = a.name || a.id, nb = b.name || b.id;
+		// Army edge: neither endpoint should be sea
+		if (type === "army" || type === "both") {
+			if (a.type === "sea")
+				issues.push({ sev: "warn", msg: `"${na}" is sea but has army edge to "${nb}"` });
+			if (b.type === "sea")
+				issues.push({ sev: "warn", msg: `"${nb}" is sea but has army edge to "${na}"` });
+		}
+		// Fleet edge: neither endpoint should be land
+		if (type === "fleet" || type === "both") {
+			if (a.type === "land")
+				issues.push({ sev: "warn", msg: `"${na}" is land but has fleet edge to "${nb}"` });
+			if (b.type === "land")
+				issues.push({ sev: "warn", msg: `"${nb}" is land but has fleet edge to "${na}"` });
+		}
+		// Inferred type mismatch (skip coast-coast: genuinely ambiguous)
+		if (!(a.type === "coast" && b.type === "coast")) {
+			const inferred = inferEdgeType(e.a, e.b);
+			if (inferred !== type) {
+				issues.push({ sev: "info", msg: `"${na}" ↔ "${nb}": type is ${type}, inferred ${inferred}` });
+			}
 		}
 	}
 	return issues;
@@ -1217,7 +1305,6 @@ function handleEmptyClick(e) {
 			type: "land",
 			sc: false,
 			owner: null,
-			coasts: [],
 		};
 		state.selectedTerritory = id;
 		saveState();
@@ -1230,16 +1317,24 @@ function handleEmptyClick(e) {
 	}
 }
 
+function inferEdgeType(idA, idB) {
+	const a = state.territories[idA], b = state.territories[idB];
+	if (!a || !b) return "both";
+	const ta = a.type, tb = b.type;
+	if (ta === "land" && tb === "land") return "army";
+	if (ta === "sea"  && tb === "sea")  return "fleet";
+	if ((ta === "sea" && tb === "land") || (ta === "land" && tb === "sea")) return "army";
+	if ((ta === "sea" && tb === "coast") || (ta === "coast" && tb === "sea")) return "fleet";
+	if ((ta === "land" && tb === "coast") || (ta === "coast" && tb === "land")) return "army";
+	return "both"; // coast–coast
+}
+
 function addEdge(a, b) {
 	if (a === b) return;
-	if (a > b) {
-		const t = a;
-		a = b;
-		b = t;
-	}
+	if (a > b) { const t = a; a = b; b = t; }
 	if (state.edges.some((e) => e.a === a && e.b === b)) return;
 	pushUndo();
-	state.edges.push({ a, b });
+	state.edges.push({ a, b, type: inferEdgeType(a, b) });
 	saveState();
 }
 
@@ -1381,6 +1476,11 @@ function buildExportBlob() {
 	}
 
 	const territories = {};
+	// Build edge lookup keyed by id pair for fast type retrieval
+	const edgeTypeOf = {};
+	for (const e of state.edges) {
+		edgeTypeOf[`${e.a}|${e.b}`] = e.type || "both";
+	}
 	const adjByT = {};
 	for (const e of state.edges) {
 		(adjByT[e.a] ||= []).push(e.b);
@@ -1390,18 +1490,21 @@ function buildExportBlob() {
 		(a.name || a.id).localeCompare(b.name || b.id),
 	);
 	for (const t of sortedTs) {
-		const adj = (adjByT[t.id] || [])
+		const adjObj = {};
+		const neighbors = (adjByT[t.id] || [])
 			.map((nid) => state.territories[nid])
 			.filter(Boolean)
-			.map(ref)
-			.sort();
+			.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+		for (const n of neighbors) {
+			const key = t.id < n.id ? `${t.id}|${n.id}` : `${n.id}|${t.id}`;
+			adjObj[ref(n)] = edgeTypeOf[key] || "both";
+		}
 		const ownerName = state.powers.find((p) => p.id === t.owner)?.name || null;
 		territories[ref(t)] = {
 			type: t.type,
 			supply_center: !!t.sc,
 			owner: ownerName,
-			coasts: t.coasts && t.coasts.length ? t.coasts : undefined,
-			adjacent: adj,
+			adjacent: adjObj,
 			_pos: { x: Math.round(t.x), y: Math.round(t.y) },
 		};
 	}
@@ -1531,22 +1634,27 @@ function importJSON(obj) {
 				type: td.type || "land",
 				sc: !!td.supply_center,
 				owner: ownerPower?.id || null,
-				coasts: td.coasts || [],
 			};
 		}
 		nextTerritoryId = next;
-		// Edges from adjacency lists
+		// Edges from adjacency map (new: object with types) or array (legacy)
 		const seen = new Set();
 		for (const tname in obj.territories) {
 			const td = obj.territories[tname];
 			const a = nameToId[tname];
-			for (const nname of td.adjacent || []) {
+			const adjRaw = td.adjacent || {};
+			// Support both {name: type} object and legacy [name] array
+			const entries = Array.isArray(adjRaw)
+				? adjRaw.map((n) => [n, "both"])
+				: Object.entries(adjRaw);
+			for (const [nname, etype] of entries) {
 				const b = nameToId[nname];
 				if (!b || !a) continue;
 				const key = a < b ? `${a}|${b}` : `${b}|${a}`;
 				if (seen.has(key)) continue;
 				seen.add(key);
-				state.edges.push(a < b ? { a, b } : { a: b, b: a });
+				const type = ["army", "fleet", "both"].includes(etype) ? etype : "both";
+				state.edges.push(a < b ? { a, b, type } : { a: b, b: a, type });
 			}
 		}
 		// Restore graph view state if present
@@ -1816,16 +1924,29 @@ function renderGraph() {
 
 	const root = document.createElementNS("http://www.w3.org/2000/svg", "g");
 	const { tx, ty, scale } = graphViewport;
+	const isc = 1 / scale;
 	root.setAttribute("transform", `translate(${tx},${ty}) scale(${scale})`);
 
 	// Edges
 	for (const e of state.edges) {
 		const a = graphNodes[e.a], b = graphNodes[e.b];
 		if (!a || !b) continue;
+		const type = e.type || "both";
 		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
 		line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
 		line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
 		line.setAttribute("class", "gedge");
+		line.setAttribute("stroke-width", 2.5 * isc);
+		if (type === "army") {
+			line.setAttribute("stroke", "#a06030");
+			line.setAttribute("stroke-dasharray", `${6 * isc} ${4 * isc}`);
+		} else if (type === "fleet") {
+			line.setAttribute("stroke", "#2060b0");
+			line.setAttribute("stroke-dasharray", `${2 * isc} ${3 * isc}`);
+		} else {
+			line.setAttribute("stroke", "#333");
+		}
+		line.setAttribute("opacity", "0.7");
 		root.appendChild(line);
 	}
 
@@ -1845,7 +1966,6 @@ function renderGraph() {
 	}
 
 	// Nodes — node shapes stay fixed screen-size via counter-scale
-	const isc = 1 / scale; // inverse scale for screen-constant elements
 	for (const id in graphNodes) {
 		const t = state.territories[id];
 		if (!t) continue;
