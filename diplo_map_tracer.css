@@ -453,15 +453,7 @@ kbd {
 	font-size: 11px;
 	color: #555;
 }
-.power-row .pc-count.ok {
-	color: var(--ok);
-}
-.power-row .pc-count.over {
-	color: var(--err);
-}
-.power-row .pc-count.under {
-	color: var(--warn);
-}
+
 .power-row .key-hint {
 	font-family: "JetBrains Mono", monospace;
 	font-size: 10px;

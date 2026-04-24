@@ -22,8 +22,10 @@ let state = {
 };
 
 let nextTerritoryId = 1;
+let jsonFileHandle = null; // FileSystemFileHandle when a file is open via FSA
 
 const LS_KEY = "diplo-map-tracer-state-v1";
+const FSA_SUPPORTED = typeof window.showOpenFilePicker === "function";
 
 function getOwnerColor(ownerId) {
 	if (!ownerId || ownerId === "neutral") return "#e8e0cc";
@@ -93,15 +95,15 @@ function loadState() {
 	}
 }
 
-function flashSaved() {
+function flashSaved(msg = "✓ saved", duration = 900) {
 	const el = document.getElementById("sb-saved");
-	el.textContent = "✓ saved";
+	el.textContent = msg;
 	el.style.opacity = 1;
 	clearTimeout(flashSaved._t);
 	flashSaved._t = setTimeout(() => {
 		el.style.opacity = 0.6;
 		el.textContent = "autosaved";
-	}, 900);
+	}, duration);
 }
 
 // Undo stack
@@ -804,16 +806,8 @@ function sectionPowers() {
 		const homeCount = Object.values(state.territories).filter(
 			(t) => t.sc && t.owner === p.id,
 		).length;
-		const target = p.count || 0;
-		let cls = "pc-count";
-		if (target > 0) {
-			if (homeCount === target) cls += " ok";
-			else if (homeCount > target) cls += " over";
-			else cls += " under";
-		}
-		const c = el("span", cls);
-		if (target > 0) c.textContent = `${homeCount}/${target}`;
-		else c.textContent = `${homeCount}`;
+		const c = el("span", "pc-count");
+		c.textContent = `${homeCount}`;
 		row.appendChild(c);
 
 		if (i < 9) row.appendChild(el("span", "key-hint", i + 1));
@@ -843,7 +837,6 @@ function sectionPowers() {
 			id: newId,
 			name: "Power " + (realPowers.length + 1),
 			color: `hsl(${hues[idx]} 55% 55%)`,
-			count: 0,
 		});
 		saveState();
 		renderSidebar();
@@ -881,7 +874,6 @@ function openPowerEditor(p) {
         <input type="text" id="pe-color" value="${escapeHtml(p.color)}" style="flex:1">
       </div>
     </div>
-    <div class="field"><label>Home SC target count (0 for unknown)</label><input type="text" id="pe-count" value="${p.count || 0}"></div>
     <div class="actions">
       <button class="toolbtn danger" id="pe-del">Delete power</button>
       <div class="spacer" style="flex:1"></div>
@@ -909,7 +901,6 @@ function openPowerEditor(p) {
 		pushUndo();
 		p.name = m.querySelector("#pe-name").value || p.name;
 		p.color = txt.value || p.color;
-		p.count = parseInt(m.querySelector("#pe-count").value) || 0;
 		saveState();
 		bg.remove();
 		renderAll();
@@ -990,19 +981,6 @@ function validate() {
 	for (const t of Object.values(state.territories)) {
 		if (t.type === "sea" && (t.owner || t.sc)) {
 			issues.push({ sev: "err", msg: `Sea "${t.name}" has owner/SC` });
-		}
-	}
-	// Power home-SC counts
-	for (const p of state.powers) {
-		if (p.id === "neutral" || !p.count) continue;
-		const actual = Object.values(state.territories).filter(
-			(t) => t.sc && t.owner === p.id,
-		).length;
-		if (actual !== p.count) {
-			issues.push({
-				sev: actual > p.count ? "err" : "warn",
-				msg: `${p.name}: ${actual}/${p.count} home SC${actual === p.count ? "" : actual > p.count ? " (too many)" : " (missing)"}`,
-			});
 		}
 	}
 	// Sea↔land direct (without coast) warning
@@ -1386,8 +1364,7 @@ function onKeyUp(e) {
 // EXPORT / IMPORT
 // =============================================================================
 
-function exportJSON() {
-	// Build name-keyed output. Use name when available, else id.
+function buildExportBlob() {
 	const ref = (t) => (t.name && t.name.trim()) || t.id;
 
 	const powers = {};
@@ -1399,14 +1376,11 @@ function exportJSON() {
 			.sort();
 		powers[p.name] = {
 			color: p.color,
-			declared_home_sc_count: p.count || null,
-			actual_home_sc_count: homes.length,
 			home_supply_centers: homes,
 		};
 	}
 
 	const territories = {};
-	// adjacency lookup
 	const adjByT = {};
 	for (const e of state.edges) {
 		(adjByT[e.a] ||= []).push(e.b);
@@ -1441,6 +1415,7 @@ function exportJSON() {
 			graphNodesByName[name] = { x: Math.round(n.x), y: Math.round(n.y), anchored: n.anchored };
 		}
 	}
+
 	const out = {
 		variant_name: "Untitled Diplomacy Variant",
 		generated_by: "Diplo Map Tracer",
@@ -1462,21 +1437,66 @@ function exportJSON() {
 		},
 	};
 
-	const blob = new Blob([JSON.stringify(out, null, 2)], {
-		type: "application/json",
-	});
+	return new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+}
+
+function downloadBlob(blob, filename) {
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
 	a.href = url;
-	a.download = "diplo_map_extraction.json";
+	a.download = filename;
 	a.click();
 	setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function updateExportBtn() {
+	const btn = document.getElementById("btn-export");
+	btn.textContent = jsonFileHandle ? `Save JSON ↓` : "Export JSON ↓";
+	btn.title = jsonFileHandle ? `Saving to: ${jsonFileHandle.name}` : "";
+}
+
+async function exportJSON() {
+	const blob = buildExportBlob();
+
+	// Already have a handle — write in place.
+	if (jsonFileHandle) {
+		try {
+			const writable = await jsonFileHandle.createWritable();
+			await writable.write(blob);
+			await writable.close();
+			flashSaved(`✓ saved to ${jsonFileHandle.name}`, 2000);
+			return;
+		} catch {
+			// Permission revoked or file gone — fall through to picker.
+			jsonFileHandle = null;
+			updateExportBtn();
+		}
+	}
+
+	if (FSA_SUPPORTED) {
+		try {
+			jsonFileHandle = await window.showSaveFilePicker({
+				suggestedName: "diplo_map_extraction.json",
+				types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+			});
+			updateExportBtn();
+			const writable = await jsonFileHandle.createWritable();
+			await writable.write(blob);
+			await writable.close();
+			flashSaved(`✓ saved to ${jsonFileHandle.name}`, 2000);
+		} catch (e) {
+			if (e.name !== "AbortError") alert("Save failed: " + e.message);
+		}
+	} else {
+		downloadBlob(blob, "diplo_map_extraction.json");
+		flashSaved("✓ exported", 2000);
+	}
 }
 
 function importJSON(obj) {
 	// Be permissive: accept our own export format, or raw {territories, edges, powers}.
 	if (!confirm("Importing will replace the current extraction. Proceed?"))
-		return;
+		return false;
 	pushUndo();
 
 	if (obj.territories && !Array.isArray(obj.territories) && obj.powers) {
@@ -1495,7 +1515,6 @@ function importJSON(obj) {
 				id: "p" + Math.random().toString(36).slice(2, 7),
 				name: pname,
 				color: p.color || "#888",
-				count: p.declared_home_sc_count || p.actual_home_sc_count || 0,
 			});
 		}
 
@@ -2161,23 +2180,41 @@ function init() {
 
 	// Export / Import / Reset
 	document.getElementById("btn-export").onclick = exportJSON;
-	document.getElementById("btn-import").onclick = () => {
-		document.getElementById("import-input").click();
-	};
-	document.getElementById("import-input").onchange = (e) => {
-		const f = e.target.files[0];
-		if (!f) return;
-		const r = new FileReader();
-		r.onload = (ev) => {
+	if (FSA_SUPPORTED) {
+		document.getElementById("btn-import").onclick = async () => {
 			try {
-				const obj = JSON.parse(ev.target.result);
-				importJSON(obj);
-			} catch (err) {
-				alert("Invalid JSON: " + err.message);
+				const [handle] = await window.showOpenFilePicker({
+					types: [{ description: "JSON", accept: { "application/json": [".json"] } }],
+				});
+				const file = await handle.getFile();
+				const obj = JSON.parse(await file.text());
+				if (importJSON(obj) !== false) {
+					jsonFileHandle = handle;
+					updateExportBtn();
+				}
+			} catch (e) {
+				if (e.name !== "AbortError") alert("Open failed: " + e.message);
 			}
 		};
-		r.readAsText(f);
-	};
+	} else {
+		document.getElementById("btn-import").onclick = () => {
+			document.getElementById("import-input").click();
+		};
+		document.getElementById("import-input").onchange = (e) => {
+			const f = e.target.files[0];
+			if (!f) return;
+			const r = new FileReader();
+			r.onload = (ev) => {
+				try {
+					const obj = JSON.parse(ev.target.result);
+					importJSON(obj);
+				} catch (err) {
+					alert("Invalid JSON: " + err.message);
+				}
+			};
+			r.readAsText(f);
+		};
+	}
 	document.getElementById("btn-reset").onclick = () => {
 		if (
 			!confirm("This will erase all territories, edges, and powers. Continue?")
