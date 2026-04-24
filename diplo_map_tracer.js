@@ -1370,18 +1370,6 @@ function onKeyDown(e) {
 				renderAll();
 			}
 		}
-	} else if (state.mode === "ownership") {
-		const n = parseInt(e.key);
-		if (!isNaN(n) && n >= 1 && n <= 9) {
-			const realPowers = state.powers.filter((p) => p.id !== "neutral");
-			if (realPowers[n - 1]) {
-				state.selectedPower = realPowers[n - 1].id;
-				renderAll();
-			}
-		} else if (e.key === "0") {
-			state.selectedPower = null;
-			renderAll();
-		}
 	}
 }
 
