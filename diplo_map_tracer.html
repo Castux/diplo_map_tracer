@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>Diplo Map Tracer — Diplomacy variant extractor</title>
+		<link rel="stylesheet" href="diplo_map_tracer.css" />
+	</head>
+	<body>
+		<div class="topbar">
+			<h1>
+				Diplo<span class="mark">·</span>Map<span class="mark">·</span
+				>Tracer
+				<span class="hint" style="font-size: 11px"
+					>— Diplomacy variant extractor</span
+				>
+			</h1>
+
+			<div class="mode-tabs">
+				<button data-mode="territories" class="active">
+					Territories<span class="k">1</span>
+				</button>
+				<button data-mode="adjacencies">
+					Adjacencies<span class="k">2</span>
+				</button>
+				<button data-mode="ownership">
+					Ownership<span class="k">3</span>
+				</button>
+			</div>
+
+			<span class="hint" id="mode-hint"
+				>Click the map to place a territory.</span
+			>
+
+			<div class="spacer"></div>
+
+			<button class="toolbtn" id="btn-load-image">Load map…</button>
+			<button class="toolbtn" id="btn-help">?</button>
+			<button class="toolbtn" id="btn-import">Import JSON</button>
+			<button class="toolbtn" id="btn-export">Export JSON ↓</button>
+			<button class="toolbtn danger" id="btn-reset">Reset</button>
+		</div>
+
+		<div class="layout">
+			<div class="canvas-wrap" id="canvas-wrap">
+				<div class="drop-zone" id="drop-zone">
+					<div class="big">Drop your map image here</div>
+					<div class="sub">
+						Or click <b>Load map…</b> above. Works with PNG, JPG,
+						WebP. Everything — territories, adjacencies, ownership,
+						and the map image — autosaves to your browser and
+						survives a refresh.
+					</div>
+				</div>
+				<div
+					class="canvas-inner"
+					id="canvas-inner"
+					style="display: none"
+				>
+					<img id="map-img" alt="" draggable="false" />
+					<svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg>
+				</div>
+			</div>
+		</div>
+
+		<div class="sidebar" id="sidebar">
+			<!-- Contents injected by JS depending on mode + selection -->
+		</div>
+
+		<div class="statusbar">
+			<span class="sb-mode" id="sb-mode">TERR</span>
+			<span class="sb-item" id="sb-zoom">100%</span>
+			<span class="sb-item" id="sb-cursor">—</span>
+			<span class="sb-item" id="sb-counts"
+				>0 terr · 0 edges · 0 home SC</span
+			>
+			<span class="sb-item" id="sb-sel">nothing selected</span>
+			<span
+				class="sb-item"
+				id="sb-saved"
+				style="margin-left: auto; opacity: 0.6"
+				>autosaved</span
+			>
+		</div>
+
+		<input
+			type="file"
+			id="file-input"
+			accept="image/*"
+			style="display: none"
+		/>
+		<input
+			type="file"
+			id="import-input"
+			accept=".json,application/json"
+			style="display: none"
+		/>
+
+		<script src="diplo_map_tracer.js"></script>
+	</body>
+</html>
