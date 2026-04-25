@@ -14,7 +14,7 @@ function setMode(m) {
 	});
 	const hints = {
 		territories: "Click map to place. Click marker to edit. Drag marker to move.",
-		adjacencies: "Click two territories to connect. Drag across an edge to remove it.",
+		adjacencies: "Click two territories to connect. Click an edge to select it. Drag across an edge to remove it.",
 		ownership: "Pick a power at right, then click territories to assign. Click again to clear.",
 		graph: "Drag nodes to rearrange. Simulation applies spring physics in real time.",
 	};

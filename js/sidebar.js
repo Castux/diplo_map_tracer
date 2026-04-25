@@ -130,7 +130,7 @@ function sectionTerritoryEditor() {
 			renderSidebar();
 		});
 		l.appendChild(ch);
-		l.appendChild(document.createTextNode("Supply center (S)"));
+		l.appendChild(document.createTextNode("Supply center (Shift+S)"));
 		scRow.appendChild(l);
 		sf.appendChild(scRow);
 		s.appendChild(sf);
@@ -324,7 +324,7 @@ function sectionSelectedEdge() {
 	s.appendChild(el("h3", null, "Selected edge"));
 	const e = state.selectedEdge;
 	if (!e) {
-		s.appendChild(el("div", "empty", "Click an edge to select it."));
+		s.appendChild(el("div", "empty", "Click an edge to select it, then A · B · F to set its type."));
 		return s;
 	}
 	const ta = state.territories[e.a], tb = state.territories[e.b];
@@ -445,7 +445,7 @@ function sectionPowers() {
 	const h2 = el("div", "hint");
 	h2.style.fontSize = "10px";
 	h2.style.marginTop = "4px";
-	h2.textContent = "Right-click a power to change color / home-SC target / delete.";
+	h2.textContent = "Right-click a power to change its color or delete it.";
 	s.appendChild(h2);
 
 	return s;
