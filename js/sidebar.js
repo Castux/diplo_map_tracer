@@ -102,7 +102,7 @@ function sectionTerritoryEditor() {
 		r.addEventListener("change", () => {
 			pushUndo();
 			t.type = val;
-			if (val === "sea") { t.owner = null; t.sc = false; }
+			if (val === "sea") { t.owner = null; }
 			saveState();
 			renderOverlay();
 			renderSidebar();
@@ -114,7 +114,7 @@ function sectionTerritoryEditor() {
 	typeF.appendChild(typeRow);
 	s.appendChild(typeF);
 
-	if (t.type !== "sea") {
+	{
 		const sf = el("div", "field");
 		const scRow = el("div", "check-row");
 		const l = el("label");
@@ -553,8 +553,8 @@ function validate() {
 			issues.push({ sev: "err", msg: `Duplicate name "${n}" × ${names[n]}` });
 
 	for (const t of Object.values(state.territories)) {
-		if (t.type === "sea" && (t.owner || t.sc))
-			issues.push({ sev: "err", msg: `Sea "${t.name}" has owner/SC` });
+		if (t.type === "sea" && t.owner)
+			issues.push({ sev: "err", msg: `Sea "${t.name}" has an owner` });
 	}
 	for (const e of state.edges) {
 		const a = state.territories[e.a], b = state.territories[e.b];

@@ -311,9 +311,9 @@ function onKeyDown(e) {
 		} else if (e.key === "c" || e.key === "C") {
 			pushUndo(); t.type = "coast"; saveState(); renderAll();
 		} else if (e.key === "s") {
-			pushUndo(); t.type = "sea"; t.sc = false; t.owner = null; saveState(); renderAll();
+			pushUndo(); t.type = "sea"; t.owner = null; saveState(); renderAll();
 		} else if (e.key === "S") {
-			if (t.type !== "sea") { pushUndo(); t.sc = !t.sc; saveState(); renderAll(); }
+			pushUndo(); t.sc = !t.sc; saveState(); renderAll();
 		}
 	}
 }

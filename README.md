@@ -2,17 +2,17 @@
 
 A browser-based tool for extracting and mapping [Diplomacy](https://en.wikipedia.org/wiki/Diplomacy_(game)) game variants. Load a map image, annotate territories and adjacencies, assign ownership to powers, and export the result as structured JSON.
 
-No installation, no build step — open `diplo_map_tracer.html` in any modern browser and start annotating.
+No installation, no build step — open `index.html` in any modern browser and start annotating.
 
 ---
 
 ## Getting started
 
-Open `diplo_map_tracer.html` directly in your browser, or serve with any static server:
+Open `index.html` directly in your browser, or serve with any static server:
 
 ```bash
 python -m http.server 8000
-# then visit http://localhost:8000/diplo_map_tracer.html
+# then visit http://localhost:8000
 ```
 
 Load a map image by clicking **Load map…** or dragging an image file onto the canvas. All work autosaves to browser `localStorage` and persists across sessions.
