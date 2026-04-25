@@ -48,15 +48,29 @@ function computeAvgEdgeDist() {
 }
 
 function findOuterRing() {
-	const ids = Object.keys(graphNodes);
+	const ids = Object.keys(graphNodes).filter(id => {
+		const t = state.territories[id];
+		return !t || !isSubprovince(t);
+	});
 	if (ids.length < 3) return ids.slice();
+
+	// Build name→id so we can resolve a subprovince to its parent id
+	const nameToId = {};
+	for (const id in state.territories) nameToId[state.territories[id].name] = id;
+	const resolveId = (id) => {
+		const t = state.territories[id];
+		if (!t || !isSubprovince(t)) return id;
+		const p = getParent(t);
+		return p ? (nameToId[p.name] ?? id) : id;
+	};
 
 	const adj = {};
 	for (const id of ids) adj[id] = [];
 	for (const e of state.edges) {
-		if (graphNodes[e.a] && graphNodes[e.b]) {
-			adj[e.a].push(e.b);
-			adj[e.b].push(e.a);
+		const a = resolveId(e.a), b = resolveId(e.b);
+		if (adj[a] && adj[b] && a !== b) {
+			if (!adj[a].includes(b)) adj[a].push(b);
+			if (!adj[b].includes(a)) adj[b].push(a);
 		}
 	}
 
@@ -181,6 +195,27 @@ function graphTick() {
 		b.fx -= fx; b.fy -= fy;
 	}
 
+	// Strong parent-child spring to keep subprovinces near parent
+	const PARENT_K = 0.5;
+	const PARENT_REST = 25;
+	const tickNameToId = {};
+	for (const id in state.territories) tickNameToId[state.territories[id].name] = id;
+	for (const id of ids) {
+		const t = state.territories[id];
+		if (!t) continue;
+		const parent = getParent(t);
+		if (!parent) continue;
+		const pid = tickNameToId[parent.name];
+		const a = graphNodes[id], b = pid && graphNodes[pid];
+		if (!a || !b) continue;
+		const dx = b.x - a.x, dy = b.y - a.y;
+		const d = Math.sqrt(dx * dx + dy * dy) || 1;
+		const f = PARENT_K * (d - PARENT_REST);
+		const fx = (f * dx) / d, fy = (f * dy) / d;
+		a.fx += fx; a.fy += fy;
+		b.fx -= fx; b.fy -= fy;
+	}
+
 	for (const id of ids) {
 		const n = graphNodes[id];
 		if (n.pinned || n.anchored) continue;
@@ -230,6 +265,25 @@ function renderGraph() {
 	const { tx, ty, scale } = graphViewport;
 	const isc = 1 / scale;
 	root.setAttribute("transform", `translate(${tx},${ty}) scale(${scale})`);
+
+	// Parent-child links
+	const nameToId = {};
+	for (const id in state.territories) nameToId[state.territories[id].name] = id;
+	for (const id in state.territories) {
+		const t = state.territories[id];
+		const parent = getParent(t);
+		if (!parent) continue;
+		const pid = nameToId[parent.name];
+		const a = graphNodes[id], b = pid && graphNodes[pid];
+		if (!a || !b) continue;
+		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+		line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+		line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+		line.setAttribute("class", "gedge-parent");
+		line.setAttribute("stroke-width", 1.8 * isc);
+		line.setAttribute("stroke-dasharray", `${3 * isc} ${3 * isc}`);
+		root.appendChild(line);
+	}
 
 	for (const e of state.edges) {
 		const a = graphNodes[e.a], b = graphNodes[e.b];
