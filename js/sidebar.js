@@ -15,6 +15,7 @@ function renderSidebar() {
 		sb.appendChild(sectionSelectedEdge());
 		sb.appendChild(sectionSelectedAdjacencies());
 		sb.appendChild(sectionTerritoryList());
+		sb.appendChild(sectionValidation());
 	} else if (state.mode === "ownership") {
 		sb.appendChild(sectionPowers());
 		sb.appendChild(sectionTerritoryList());
@@ -249,6 +250,7 @@ function sectionAdjacencyHelp() {
 	info.innerHTML = `
     <p style="margin:0 0 6px"><b>Single pair:</b> click A, then B.</p>
     <p style="margin:0 0 6px"><b>Remove edge:</b> click-drag across an edge line, or use the selected-territory list below.</p>
+    <p style="margin:0"><b>Edge type:</b> select an edge, then press <kbd>A</kbd> army · <kbd>B</kbd> both · <kbd>F</kbd> fleet.</p>
   `;
 	s.appendChild(info);
 

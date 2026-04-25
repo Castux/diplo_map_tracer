@@ -227,7 +227,9 @@ function addEdge(a, b) {
 	if (a > b) { const t = a; a = b; b = t; }
 	if (state.edges.some((e) => e.a === a && e.b === b)) return;
 	pushUndo();
-	state.edges.push({ a, b, type: inferEdgeType(a, b) });
+	const type = inferEdgeType(a, b);
+	state.edges.push({ a, b, type });
+	state.selectedEdge = { a, b };
 	saveState();
 }
 
@@ -275,6 +277,17 @@ function onKeyDown(e) {
 		state.pendingEdge = null;
 		state.selectedTerritory = null;
 		renderAll();
+	} else if (state.mode === "adjacencies" && state.selectedEdge) {
+		const edge = state.edges.find(ed => ed.a === state.selectedEdge.a && ed.b === state.selectedEdge.b);
+		if (edge) {
+			if (e.key === "a" || e.key === "A") {
+				pushUndo(); edge.type = "army"; saveState(); renderAll();
+			} else if (e.key === "b" || e.key === "B") {
+				pushUndo(); edge.type = "both"; saveState(); renderAll();
+			} else if (e.key === "f" || e.key === "F") {
+				pushUndo(); edge.type = "fleet"; saveState(); renderAll();
+			}
+		}
 	} else if (e.key === "f") {
 		if (state.imageW) fitToScreen();
 	} else if (e.key === "Delete" || e.key === "Backspace") {

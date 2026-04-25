@@ -194,6 +194,7 @@ function toggleHelp() {
       <tr><td><kbd>Shift</kbd>+<kbd>S</kbd></td><td>Toggle supply center</td></tr>
       <tr><td colspan="2" style="padding-top:10px; font-weight:600">Adjacency mode</td></tr>
       <tr><td><kbd>Esc</kbd></td><td>Cancel pending edge</td></tr>
+      <tr><td><kbd>A</kbd> / <kbd>B</kbd> / <kbd>F</kbd></td><td>Set selected edge type: Army / Both / Fleet</td></tr>
     </table>
   `;
 	document.body.appendChild(h);
