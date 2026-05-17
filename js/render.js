@@ -38,7 +38,7 @@ function fitToScreen() {
 function applyTransform() {
 	const el = document.getElementById("canvas-inner");
 	const { tx, ty, scale } = state.viewport;
-	el.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+	el.style.transform = `translate(${Math.round(tx)}px, ${Math.round(ty)}px) scale(${scale})`;
 	document.getElementById("sb-zoom").textContent = Math.round(scale * 100) + "%";
 	document.documentElement.style.setProperty("--marker-r", 8 / scale + "px");
 	renderOverlay();
@@ -69,6 +69,20 @@ function renderOverlay() {
 	while (svg.firstChild) svg.removeChild(svg.firstChild);
 
 	const inverseScale = 1 / state.viewport.scale;
+
+	// Parent-child links
+	for (const id in state.territories) {
+		const t = state.territories[id];
+		const parent = getParent(t);
+		if (!parent) continue;
+		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+		line.setAttribute("x1", parent.x); line.setAttribute("y1", parent.y);
+		line.setAttribute("x2", t.x); line.setAttribute("y2", t.y);
+		line.setAttribute("class", "edge-parent");
+		line.setAttribute("stroke-width", 1.5 * inverseScale);
+		line.setAttribute("stroke-dasharray", `${3 * inverseScale} ${3 * inverseScale}`);
+		svg.appendChild(line);
+	}
 
 	// Edges
 	for (const e of state.edges) {
@@ -160,7 +174,8 @@ function renderOverlay() {
 		g.appendChild(halo);
 
 		const r = 8 * inverseScale;
-		const color = getOwnerColor(t.owner);
+		const parent = getParent(t);
+		const color = getOwnerColor((parent || t).owner);
 		let shape;
 		if (t.type === "sea") {
 			shape = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
@@ -183,7 +198,7 @@ function renderOverlay() {
 		shape.setAttribute("stroke-width", 2.0 * inverseScale);
 		g.appendChild(shape);
 
-		if (t.sc) {
+		if (t.sc && !parent) {
 			const isHome = t.owner && t.owner !== "neutral";
 			const ring = document.createElementNS("http://www.w3.org/2000/svg", "circle");
 			ring.setAttribute("class", "sc-indicator" + (isHome ? " home" : ""));
@@ -209,7 +224,7 @@ function renderStatus() {
 	const nT = Object.keys(state.territories).length;
 	const nE = state.edges.length;
 	const nH = Object.values(state.territories).filter(
-		(t) => t.sc && t.owner && t.owner !== "neutral",
+		(t) => !isSubprovince(t) && t.sc && t.owner && t.owner !== "neutral",
 	).length;
 	document.getElementById("sb-counts").textContent =
 		`${nT} terr · ${nE} edges · ${nH} home SC`;

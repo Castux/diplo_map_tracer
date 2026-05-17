@@ -33,6 +33,18 @@ function getOwnerColor(ownerId) {
 	return p ? p.color : "#e8e0cc";
 }
 
+// A territory is a subprovince if its name contains '/' after the first character.
+function isSubprovince(t) {
+	return !!t.name && t.name.indexOf('/') >= 1;
+}
+
+// Returns the parent territory object, or null if none exists (or t is not a subprovince).
+function getParent(t) {
+	if (!isSubprovince(t)) return null;
+	const parentName = t.name.slice(0, t.name.indexOf('/'));
+	return Object.values(state.territories).find(p => p.name === parentName) || null;
+}
+
 // =============================================================================
 // PERSISTENCE
 // =============================================================================

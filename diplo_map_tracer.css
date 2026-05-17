@@ -266,6 +266,16 @@ kbd {
 	cursor: pointer;
 	pointer-events: stroke;
 }
+.edge-parent {
+	stroke: var(--rule);
+	stroke-opacity: 0.45;
+	pointer-events: none;
+}
+.gedge-parent {
+	stroke: var(--rule);
+	stroke-opacity: 0.5;
+	pointer-events: none;
+}
 .edge.hover {
 	stroke: var(--accent);
 	stroke-width: 2.2;

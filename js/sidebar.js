@@ -114,52 +114,63 @@ function sectionTerritoryEditor() {
 	typeF.appendChild(typeRow);
 	s.appendChild(typeF);
 
-	{
-		const sf = el("div", "field");
-		const scRow = el("div", "check-row");
-		const l = el("label");
-		const ch = el("input");
-		ch.type = "checkbox";
-		ch.checked = !!t.sc;
-		ch.addEventListener("change", () => {
-			pushUndo();
-			t.sc = ch.checked;
-			saveState();
-			renderOverlay();
-			renderStatus();
-			renderSidebar();
-		});
-		l.appendChild(ch);
-		l.appendChild(document.createTextNode("Supply center (Shift+S)"));
-		scRow.appendChild(l);
-		sf.appendChild(scRow);
-		s.appendChild(sf);
-	}
-
-	if (t.type !== "sea") {
-		const of = el("div", "field");
-		of.appendChild(el("label", null, "Starting owner"));
-		const sel = el("select");
-		const optNone = el("option", null, "— neutral / unowned —");
-		optNone.value = "";
-		sel.appendChild(optNone);
-		for (const p of state.powers) {
-			if (p.id === "neutral") continue;
-			const o = el("option", null, p.name);
-			o.value = p.id;
-			sel.appendChild(o);
+	const tParent = getParent(t);
+	if (tParent) {
+		const inf = el("div", "field");
+		inf.appendChild(el("label", null, "Supply center & owner"));
+		const note = el("div", "hint");
+		note.style.marginTop = "2px";
+		note.textContent = `Follows parent territory "${tParent.name}"`;
+		inf.appendChild(note);
+		s.appendChild(inf);
+	} else {
+		{
+			const sf = el("div", "field");
+			const scRow = el("div", "check-row");
+			const l = el("label");
+			const ch = el("input");
+			ch.type = "checkbox";
+			ch.checked = !!t.sc;
+			ch.addEventListener("change", () => {
+				pushUndo();
+				t.sc = ch.checked;
+				saveState();
+				renderOverlay();
+				renderStatus();
+				renderSidebar();
+			});
+			l.appendChild(ch);
+			l.appendChild(document.createTextNode("Supply center (Shift+S)"));
+			scRow.appendChild(l);
+			sf.appendChild(scRow);
+			s.appendChild(sf);
 		}
-		sel.value = t.owner && t.owner !== "neutral" ? t.owner : "";
-		sel.addEventListener("change", () => {
-			pushUndo();
-			t.owner = sel.value || null;
-			saveState();
-			renderOverlay();
-			renderStatus();
-			renderSidebar();
-		});
-		of.appendChild(sel);
-		s.appendChild(of);
+
+		if (t.type !== "sea") {
+			const of = el("div", "field");
+			of.appendChild(el("label", null, "Starting owner"));
+			const sel = el("select");
+			const optNone = el("option", null, "— neutral / unowned —");
+			optNone.value = "";
+			sel.appendChild(optNone);
+			for (const p of state.powers) {
+				if (p.id === "neutral") continue;
+				const o = el("option", null, p.name);
+				o.value = p.id;
+				sel.appendChild(o);
+			}
+			sel.value = t.owner && t.owner !== "neutral" ? t.owner : "";
+			sel.addEventListener("change", () => {
+				pushUndo();
+				t.owner = sel.value || null;
+				saveState();
+				renderOverlay();
+				renderStatus();
+				renderSidebar();
+			});
+			of.appendChild(sel);
+			s.appendChild(of);
+		}
 	}
 
 	const del = el("button", "toolbtn danger", "Delete territory");
@@ -283,29 +294,40 @@ function sectionSelectedAdjacencies() {
 		return s;
 	}
 	const id = state.selectedTerritory;
-	const neighbors = state.edges
+	const rawNeighbors = state.edges
 		.filter((e) => e.a === id || e.b === id)
 		.map((e) => (e.a === id ? e.b : e.a))
 		.map((nid) => state.territories[nid])
-		.filter(Boolean)
-		.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+		.filter(Boolean);
+
+	// Deduplicate by parent: group sibling subprovinces under one entry.
+	const groups = new Map(); // display key → {display: territory, ids: Set}
+	for (const n of rawNeighbors) {
+		const par = getParent(n);
+		const display = par || n;
+		const key = display.id;
+		if (!groups.has(key)) groups.set(key, { display, ids: new Set() });
+		groups.get(key).ids.add(n.id);
+	}
+	const sorted = [...groups.values()].sort((a, b) =>
+		(a.display.name || "").localeCompare(b.display.name || ""));
 
 	const list = el("div", "territory-list");
-	if (!neighbors.length) {
+	if (!sorted.length) {
 		list.appendChild(
 			el("div", "empty", "No neighbors. Click another territory to connect."),
 		);
 	} else {
-		for (const n of neighbors) {
+		for (const { display, ids } of sorted) {
 			const row = el("div", "t-row");
-			const name = el("span", null, n.name || "(unnamed)");
+			const name = el("span", null, display.name || "(unnamed)");
 			name.style.flex = "1";
 			const rm = el("button", "small-btn", "×");
 			rm.addEventListener("click", (ev) => {
 				ev.stopPropagation();
 				pushUndo();
 				state.edges = state.edges.filter(
-					(e) => !((e.a === id && e.b === n.id) || (e.a === n.id && e.b === id)),
+					(e) => !((e.a === id && ids.has(e.b)) || (e.b === id && ids.has(e.a))),
 				);
 				saveState();
 				renderAll();
@@ -555,6 +577,14 @@ function validate() {
 	for (const t of Object.values(state.territories)) {
 		if (t.type === "sea" && t.owner)
 			issues.push({ sev: "err", msg: `Sea "${t.name}" has an owner` });
+		if (isSubprovince(t)) {
+			if (!getParent(t)) {
+				const parentName = t.name.slice(0, t.name.indexOf('/'));
+				issues.push({ sev: "warn", msg: `"${t.name}" looks like a subprovince but "${parentName}" doesn't exist` });
+			} else if (t.sc || t.owner) {
+				issues.push({ sev: "warn", msg: `"${t.name}" is a subprovince with SC/owner set directly — ignored` });
+			}
+		}
 	}
 	for (const e of state.edges) {
 		const a = state.territories[e.a], b = state.territories[e.b];

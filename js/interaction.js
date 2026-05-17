@@ -174,9 +174,10 @@ function handleMarkerClick(id, e) {
 			return;
 		}
 		const t = state.territories[id];
-		if (t.type === "sea") return;
+		const target = getParent(t) || t;
+		if (target.type === "sea") return;
 		pushUndo();
-		t.owner = t.owner === state.selectedPower ? null : state.selectedPower;
+		target.owner = target.owner === state.selectedPower ? null : state.selectedPower;
 		saveState();
 		state.selectedTerritory = id;
 		renderAll();
@@ -356,7 +357,7 @@ function buildExportBlob() {
 	for (const p of state.powers) {
 		if (p.id === "neutral") continue;
 		const homes = Object.values(state.territories)
-			.filter((t) => t.sc && t.owner === p.id)
+			.filter((t) => !isSubprovince(t) && t.sc && t.owner === p.id)
 			.map(ref)
 			.sort();
 		powers[p.name] = { color: p.color, home_supply_centers: homes };
@@ -385,11 +386,14 @@ function buildExportBlob() {
 			const key = t.id < n.id ? `${t.id}|${n.id}` : `${n.id}|${t.id}`;
 			adjObj[ref(n)] = edgeTypeOf[key] || "both";
 		}
-		const ownerName = state.powers.find((p) => p.id === t.owner)?.name || null;
+		const parentT = getParent(t);
+		const effectiveT = parentT || t;
+		const ownerName = state.powers.find((p) => p.id === effectiveT.owner)?.name || null;
 		territories[ref(t)] = {
 			type: t.type,
-			supply_center: !!t.sc,
+			supply_center: !!effectiveT.sc,
 			owner: ownerName,
+			...(parentT ? { parent: ref(parentT) } : {}),
 			adjacent: adjObj,
 			_pos: { x: Math.round(t.x), y: Math.round(t.y) },
 		};
@@ -412,9 +416,9 @@ function buildExportBlob() {
 		stats: {
 			territories: sortedTs.length,
 			edges: state.edges.length,
-			supply_centers: sortedTs.filter((t) => t.sc).length,
+			supply_centers: sortedTs.filter((t) => !isSubprovince(t) && t.sc).length,
 			home_supply_centers: sortedTs.filter(
-				(t) => t.sc && t.owner && t.owner !== "neutral",
+				(t) => !isSubprovince(t) && t.sc && t.owner && t.owner !== "neutral",
 			).length,
 		},
 		powers,
