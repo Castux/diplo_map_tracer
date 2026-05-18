@@ -2,13 +2,11 @@
 
 A browser-based tool for extracting and mapping [Diplomacy](https://en.wikipedia.org/wiki/Diplomacy_(game)) game variants. Load a map image, annotate territories and adjacencies, assign ownership to powers, and export the result as structured JSON.
 
-No installation, no build step — open `index.html` in any modern browser and start annotating.
-
----
-
 ## Getting started
 
-Open `index.html` directly in your browser, or serve with any static server:
+Visit the live version on https://castux.github.io/diplo_map_tracer/
+
+Or run locally: open `index.html` directly in your browser, or serve with any static server:
 
 ```bash
 python -m http.server 8000
@@ -17,7 +15,7 @@ python -m http.server 8000
 
 Load a map image by clicking **Load map…** or dragging an image file onto the canvas. All work autosaves to browser `localStorage` and persists across sessions.
 
----
+**Disclaimer: despite the built-in safeties, it is HIGHLY RECOMMENDED you backup your work often in a different location, so it is not lost or overwritten with corrupted data.**
 
 ## Modes
 
@@ -61,8 +59,6 @@ A force-directed layout of the territory adjacency graph, useful for spotting co
 - **Spring length** and **Repulsion** sliders tune the physics.
 - **Show adjacency count** colours nodes by degree (blue → low, red → high).
 
----
-
 ## Keyboard shortcuts
 
 ### Global
@@ -96,15 +92,11 @@ A force-directed layout of the territory adjacency graph, useful for spotting co
 | `B` | Set selected edge type to Both |
 | `F` | Set selected edge type to Fleet |
 
----
-
 ## Export / Import
 
 Click **Export JSON** to save the full extraction as a `.json` file. On browsers that support the [File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API) (Chrome/Edge), the button changes to **Save JSON** after the first export and writes directly back to the same file on subsequent saves.
 
 **Import JSON** loads a previously exported file, restoring all territories, adjacencies, powers, and graph layout.
-
----
 
 ## Validation
 
@@ -115,8 +107,10 @@ The sidebar shows a live validation panel in both Territories and Adjacencies mo
 - Edges whose explicit type conflicts with what would be inferred from the territory types
 - Dangling edges referencing deleted territories
 
----
-
 ## Tech stack
 
 Vanilla HTML/CSS/JavaScript — no frameworks, no dependencies, no build step. Source is split across `js/state.js`, `js/render.js`, `js/sidebar.js`, `js/interaction.js`, `js/graph.js`, and `js/main.js`.
+
+## License
+
+Copyright 2026 Noé Falzon, released under the [MIT license](LICENSE.md). I would love to hear if you modify or include this project into yours!
