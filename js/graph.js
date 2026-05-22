@@ -13,6 +13,10 @@ let graphTensionFactor = 0.5;
 let graphRepulsionFactor = 0.32;
 let graphAttractionFactor = 1.0;
 let graphShowDegree = false;
+let graphShowAnchorRings = true;
+let graphShowDistance = false;
+let graphHoveredId = null;
+let graphDistances = null;
 let graph3DMode = false;
 const graph3DCamera = { rx: 0.4, ry: 0.6 };
 const graphNodes2DSave = {}; // persists 2D layout while 3D is active
@@ -302,6 +306,42 @@ function degreeGradientColor(t) {
 	return `rgb(${Math.round(r1 + (r2 - r1) * f)},${Math.round(g1 + (g2 - g1) * f)},${Math.round(b1 + (b2 - b1) * f)})`;
 }
 
+function computeGraphDistances(startId) {
+	const t = state.territories[startId];
+	if (!t) return null;
+
+	const bfs = (armyEdges, fleetEdges) => {
+		const adj = {};
+		for (const e of state.edges) {
+			const et = e.type || "both";
+			const ok = (armyEdges && (et === "army" || et === "both")) ||
+			           (fleetEdges && (et === "fleet" || et === "both"));
+			if (!ok) continue;
+			if (!adj[e.a]) adj[e.a] = [];
+			if (!adj[e.b]) adj[e.b] = [];
+			adj[e.a].push(e.b);
+			adj[e.b].push(e.a);
+		}
+		const dist = { [startId]: 0 };
+		const q = [startId];
+		for (let h = 0; h < q.length; h++) {
+			const cur = q[h];
+			for (const nb of (adj[cur] || [])) {
+				if (dist[nb] === undefined && graphNodes[nb]) {
+					dist[nb] = dist[cur] + 1;
+					q.push(nb);
+				}
+			}
+		}
+		return dist;
+	};
+
+	const type = t.type;
+	if (type === "land") return { land: bfs(true, false), sea: null };
+	if (type === "sea")  return { land: null, sea: bfs(false, true) };
+	return { land: bfs(true, false), sea: bfs(false, true) }; // coast
+}
+
 function renderGraph() {
 	const svg = document.getElementById("graph-svg");
 	if (!svg) return;
@@ -349,6 +389,16 @@ function renderGraph() {
 		}
 	}
 
+	let distMax = 0;
+	if (graphShowDistance && graphDistances) {
+		for (const net of [graphDistances.land, graphDistances.sea]) {
+			if (!net) continue;
+			for (const id in net) {
+				if (net[id] > distMax) distMax = net[id];
+			}
+		}
+	}
+
 	// Rendering helpers
 	const appendParentEdge = (pa, pb) => {
 		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -389,6 +439,14 @@ function renderGraph() {
 		const ownerColor = getOwnerColor(t.owner);
 		const isOwned = t.owner && t.owner !== "neutral";
 
+		let landDist, seaDist;
+		if (graphShowDistance && graphDistances) {
+			if (graphDistances.land) landDist = graphDistances.land[id];
+			if (graphDistances.sea)  seaDist  = graphDistances.sea[id];
+		}
+		const hasLandDist = landDist !== undefined;
+		const hasSeaDist  = seaDist  !== undefined;
+
 		const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
 		g.setAttribute("class", "gnode" +
 			(n.anchored ? " anchored" : "") +
@@ -415,7 +473,18 @@ function renderGraph() {
 			shape.setAttribute("r", R);
 		}
 		shape.setAttribute("class", "gn-dot");
-		if (graphShowDegree) {
+		if (graphShowDistance && graphDistances && (hasLandDist || hasSeaDist)) {
+			const d = hasLandDist ? landDist : seaDist;
+			const td = distMax > 0 ? d / distMax : 0;
+			shape.setAttribute("fill", degreeGradientColor(td));
+			shape.setAttribute("stroke", "#2228");
+			shape.setAttribute("stroke-width", 2.0 * isc);
+		} else if (graphShowDistance && graphDistances) {
+			shape.setAttribute("fill", typeColor);
+			shape.setAttribute("stroke", "#3334");
+			shape.setAttribute("stroke-width", 2.0 * isc);
+			g.style.opacity = "0.25";
+		} else if (graphShowDegree) {
 			const td = degMax > degMin ? (degreeMap[id] - degMin) / (degMax - degMin) : 0.5;
 			shape.setAttribute("fill", degreeGradientColor(td));
 			shape.setAttribute("stroke", "#2228");
@@ -444,7 +513,7 @@ function renderGraph() {
 			g.appendChild(dot);
 		}
 
-		if (n.anchored) {
+		if (n.anchored && graphShowAnchorRings) {
 			const ar = document.createElementNS("http://www.w3.org/2000/svg", "circle");
 			ar.setAttribute("class", "gn-anchor-ring");
 			ar.setAttribute("r", R * 2.2);
@@ -460,11 +529,29 @@ function renderGraph() {
 		label.textContent = t.name || t.id;
 		g.appendChild(label);
 
-		if (graphShowDegree) {
+		if (graphShowDistance && graphDistances && (hasLandDist || hasSeaDist)) {
+			if (hasLandDist && hasSeaDist) {
+				const dt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+				dt.setAttribute("class", "gn-degree");
+				dt.setAttribute("y", R * 0.38);
+				dt.setAttribute("font-size", 13 * isc);
+				dt.setAttribute("stroke-width", 3 * isc);
+				dt.textContent = `${landDist}/${seaDist}`;
+				g.appendChild(dt);
+			} else {
+				const dt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+				dt.setAttribute("class", "gn-degree");
+				dt.setAttribute("y", R * 0.38);
+				dt.setAttribute("font-size", 16 * isc);
+				dt.setAttribute("stroke-width", 3 * isc);
+				dt.textContent = hasLandDist ? landDist : seaDist;
+				g.appendChild(dt);
+			}
+		} else if (graphShowDegree) {
 			const deg = document.createElementNS("http://www.w3.org/2000/svg", "text");
 			deg.setAttribute("class", "gn-degree");
 			deg.setAttribute("y", R * 0.38);
-			deg.setAttribute("font-size", 11 * isc);
+			deg.setAttribute("font-size", 16 * isc);
 			deg.setAttribute("stroke-width", 3 * isc);
 			deg.textContent = degreeMap[id] ?? 0;
 			g.appendChild(deg);
@@ -599,6 +686,15 @@ function onGraphMouseMove(e) {
 		graphViewport.ty = graphPan.startTy + (e.clientY - graphPan.startY);
 		if (!graphSim.running) renderGraph();
 	}
+	if (graphShowDistance && !graphDrag && !graphPan && !graph3DOrbit) {
+		const g = e.target.closest(".gnode");
+		const newId = g ? g.dataset.id : null;
+		if (newId !== graphHoveredId) {
+			graphHoveredId = newId;
+			graphDistances = newId ? computeGraphDistances(newId) : null;
+			if (!graphSim.running) renderGraph();
+		}
+	}
 }
 
 function onGraphMouseUp(e) {
@@ -659,8 +755,8 @@ function sectionGraphControls() {
 
 	const desc = el("div", "hint", graph3DMode
 		? "Drag anywhere to orbit · Scroll to zoom · Click node to toggle anchor."
-		: "Outer hull nodes are anchored (dashed ring). Click any node to toggle. Drag to move.");
-	desc.style.marginBottom = "14px";
+		: "Click a node to pin/unpin it. Drag to reposition. Scroll to zoom.\nEnable distance mode to hover any node and see hop-counts to all reachable nodes. Coast nodes show army/fleet distances as land/sea.");
+	desc.style.cssText = "margin-bottom:14px; white-space:pre-line;";
 	s.appendChild(desc);
 
 	const btnReset = el("button", "toolbtn");
@@ -826,6 +922,45 @@ function sectionGraphControls() {
 	degRow.appendChild(degChk);
 	degRow.appendChild(degLbl);
 	s.appendChild(degRow);
+
+	const ringRow = el("div");
+	ringRow.style.cssText = "display:flex; align-items:center; gap:6px; margin-top:8px;";
+	const ringChk = el("input");
+	ringChk.type = "checkbox";
+	ringChk.id = "chk-anchor-rings";
+	ringChk.checked = graphShowAnchorRings;
+	ringChk.addEventListener("change", () => {
+		graphShowAnchorRings = ringChk.checked;
+		renderGraph();
+	});
+	const ringLbl = el("label", null, "Show pinned node rings");
+	ringLbl.setAttribute("for", "chk-anchor-rings");
+	ringLbl.style.cursor = "pointer";
+	ringRow.appendChild(ringChk);
+	ringRow.appendChild(ringLbl);
+	s.appendChild(ringRow);
+
+	const distRow = el("div");
+	distRow.style.cssText = "display:flex; align-items:center; gap:6px; margin-top:8px;";
+	const distChk = el("input");
+	distChk.type = "checkbox";
+	distChk.id = "chk-distance";
+	distChk.checked = graphShowDistance;
+	distChk.addEventListener("change", () => {
+		graphShowDistance = distChk.checked;
+		if (!graphShowDistance) { graphHoveredId = null; graphDistances = null; }
+		renderGraph();
+	});
+	const distLbl = el("label", null, "Show distance on hover");
+	distLbl.setAttribute("for", "chk-distance");
+	distLbl.style.cursor = "pointer";
+	distRow.appendChild(distChk);
+	distRow.appendChild(distLbl);
+	const distHint = el("div", "hint", "Coast nodes show army/fleet distances as land/sea (e.g. 2/3).");
+	distHint.style.cssText = `margin-top:4px; margin-bottom:2px; display:${graphShowDistance ? "" : "none"};`;
+	distChk.addEventListener("change", () => { distHint.style.display = distChk.checked ? "" : "none"; });
+	s.appendChild(distRow);
+	s.appendChild(distHint);
 
 	return s;
 }
