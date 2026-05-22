@@ -10,6 +10,7 @@ let graphPan = null;
 let graphRestLen = 75;
 let graphTensionFactor = 0.5;
 let graphRepulsionFactor = 0.32;
+let graphAttractionFactor = 1.0;
 let graphShowDegree = false;
 
 function syncGraphNodes(randomize) {
@@ -161,7 +162,7 @@ function graphTick() {
 	const ids = Object.keys(graphNodes);
 	const REST_LEN = graphRestLen;
 	const REPULSION = graphRepulsionFactor * REST_LEN * REST_LEN;
-	const SPRING_K = 0.045;
+	const SPRING_K = 0.045 * graphAttractionFactor;
 	const DAMP = 0.82;
 	const GRAVITY = 0.004;
 	const MAX_V = 0.12 * REST_LEN;
@@ -578,6 +579,28 @@ function sectionGraphControls() {
 	});
 	repWrap.appendChild(repSlider);
 	s.appendChild(repWrap);
+
+	const attrWrap = el("div", "field");
+	attrWrap.style.marginTop = "10px";
+	const attrHeader = el("div");
+	attrHeader.style.cssText = "display:flex; justify-content:space-between; margin-bottom:4px;";
+	attrHeader.appendChild(el("label", null, "Attraction"));
+	const attrVal = el("span", "hint");
+	attrVal.textContent = graphAttractionFactor.toFixed(2) + "×";
+	attrHeader.appendChild(attrVal);
+	attrWrap.appendChild(attrHeader);
+	const attrSlider = el("input");
+	attrSlider.type = "range";
+	attrSlider.min = "0.05"; attrSlider.max = "4.0"; attrSlider.step = "0.05";
+	attrSlider.value = graphAttractionFactor;
+	attrSlider.style.width = "100%";
+	attrSlider.addEventListener("input", () => {
+		graphAttractionFactor = parseFloat(attrSlider.value);
+		attrVal.textContent = graphAttractionFactor.toFixed(2) + "×";
+		saveState();
+	});
+	attrWrap.appendChild(attrSlider);
+	s.appendChild(attrWrap);
 
 	const territories = Object.values(state.territories);
 	const nNodes = territories.length;
