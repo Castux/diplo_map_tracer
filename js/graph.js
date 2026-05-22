@@ -2,16 +2,21 @@
 // GRAPH VIEW — force-directed layout
 // =============================================================================
 
-const graphNodes = {}; // id -> {x, y, vx, vy, pinned, anchored}
+const graphNodes = {}; // id -> {x, y, z, vx, vy, vz, pinned, anchored}
 const graphSim = { running: false, animId: null };
 const graphViewport = { tx: 0, ty: 0, scale: 1 };
 let graphDrag = null;
 let graphPan = null;
+let graph3DOrbit = null;
 let graphRestLen = 75;
 let graphTensionFactor = 0.5;
 let graphRepulsionFactor = 0.32;
 let graphAttractionFactor = 1.0;
 let graphShowDegree = false;
+let graph3DMode = false;
+const graph3DCamera = { rx: 0.4, ry: 0.6 };
+const graphNodes2DSave = {}; // persists 2D layout while 3D is active
+const graphNodes3DSave = {}; // persists 3D layout while 2D is active
 
 function syncGraphNodes(randomize) {
 	const tArr = Object.values(state.territories);
@@ -24,16 +29,32 @@ function syncGraphNodes(randomize) {
 			graphNodes[id] = {
 				x: t.x - cx,
 				y: t.y - cy,
-				vx: 0,
-				vy: 0,
+				z: graph3DMode ? (Math.random() - 0.5) * 30 : 0,
+				vx: 0, vy: 0, vz: 0,
 				pinned: false,
 				anchored: false,
 			};
+		} else if (!('z' in graphNodes[id])) {
+			graphNodes[id].z = 0;
+			graphNodes[id].vz = 0;
 		}
 	}
 	for (const id in graphNodes) {
 		if (!state.territories[id]) delete graphNodes[id];
 	}
+}
+
+function saveNodesToStore(store) {
+	for (const id in store) delete store[id];
+	for (const id in graphNodes) store[id] = { ...graphNodes[id] };
+}
+
+function restoreNodesFromStore(store) {
+	for (const id in graphNodes) delete graphNodes[id];
+	for (const id in store) {
+		if (state.territories[id]) graphNodes[id] = { ...store[id] };
+	}
+	syncGraphNodes(false); // fill in any territories added while in the other mode
 }
 
 function computeAvgEdgeDist() {
@@ -46,6 +67,18 @@ function computeAvgEdgeDist() {
 		count++;
 	}
 	return count > 0 ? total / count : 150;
+}
+
+// Perspective projection: yaw then pitch, then mild perspective divide
+function project3D(x, y, z) {
+	const { rx, ry } = graph3DCamera;
+	const x1 = x * Math.cos(ry) + z * Math.sin(ry);
+	const z1 = -x * Math.sin(ry) + z * Math.cos(ry);
+	const y2 = y * Math.cos(rx) - z1 * Math.sin(rx);
+	const z2 = y * Math.sin(rx) + z1 * Math.cos(rx);
+	const FOV = 1200;
+	const w = FOV / (FOV + z2);
+	return { px: x1 * w, py: y2 * w, depth: z2, w };
 }
 
 function findOuterRing() {
@@ -145,10 +178,11 @@ function fitGraphToScreen() {
 
 	let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
 	for (const id of ids) {
-		minX = Math.min(minX, graphNodes[id].x);
-		maxX = Math.max(maxX, graphNodes[id].x);
-		minY = Math.min(minY, graphNodes[id].y);
-		maxY = Math.max(maxY, graphNodes[id].y);
+		const n = graphNodes[id];
+		let px = n.x, py = n.y;
+		if (graph3DMode) { const p = project3D(n.x, n.y, n.z || 0); px = p.px; py = p.py; }
+		minX = Math.min(minX, px); maxX = Math.max(maxX, px);
+		minY = Math.min(minY, py); maxY = Math.max(maxY, py);
 	}
 	const pad = 60;
 	const scaleX = (w - pad * 2) / (maxX - minX || 1);
@@ -170,18 +204,21 @@ function graphTick() {
 	for (const id of ids) {
 		graphNodes[id].fx = 0;
 		graphNodes[id].fy = 0;
+		if (graph3DMode) graphNodes[id].fz = 0;
 	}
 
 	for (let i = 0; i < ids.length; i++) {
 		for (let j = i + 1; j < ids.length; j++) {
 			const a = graphNodes[ids[i]], b = graphNodes[ids[j]];
 			const dx = a.x - b.x, dy = a.y - b.y;
-			const d2 = Math.max(dx * dx + dy * dy, 400);
+			const dz = graph3DMode ? ((a.z || 0) - (b.z || 0)) : 0;
+			const d2 = Math.max(dx * dx + dy * dy + dz * dz, 400);
 			const d = Math.sqrt(d2);
 			const f = REPULSION / d2;
 			const fx = (f * dx) / d, fy = (f * dy) / d;
 			a.fx += fx; a.fy += fy;
 			b.fx -= fx; b.fy -= fy;
+			if (graph3DMode) { const fz = (f * dz) / d; a.fz += fz; b.fz -= fz; }
 		}
 	}
 
@@ -189,11 +226,13 @@ function graphTick() {
 		const a = graphNodes[e.a], b = graphNodes[e.b];
 		if (!a || !b) continue;
 		const dx = b.x - a.x, dy = b.y - a.y;
-		const d = Math.sqrt(dx * dx + dy * dy) || 1;
+		const dz = graph3DMode ? ((b.z || 0) - (a.z || 0)) : 0;
+		const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
 		const f = SPRING_K * (d - REST_LEN);
 		const fx = (f * dx) / d, fy = (f * dy) / d;
 		a.fx += fx; a.fy += fy;
 		b.fx -= fx; b.fy -= fy;
+		if (graph3DMode) { const fz = (f * dz) / d; a.fz += fz; b.fz -= fz; }
 	}
 
 	// Strong parent-child spring to keep subprovinces near parent
@@ -210,11 +249,13 @@ function graphTick() {
 		const a = graphNodes[id], b = pid && graphNodes[pid];
 		if (!a || !b) continue;
 		const dx = b.x - a.x, dy = b.y - a.y;
-		const d = Math.sqrt(dx * dx + dy * dy) || 1;
+		const dz = graph3DMode ? ((b.z || 0) - (a.z || 0)) : 0;
+		const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
 		const f = PARENT_K * (d - PARENT_REST);
 		const fx = (f * dx) / d, fy = (f * dy) / d;
 		a.fx += fx; a.fy += fy;
 		b.fx -= fx; b.fy -= fy;
+		if (graph3DMode) { const fz = (f * dz) / d; a.fz += fz; b.fz -= fz; }
 	}
 
 	for (const id of ids) {
@@ -226,6 +267,11 @@ function graphTick() {
 		if (v > MAX_V) { n.vx = (n.vx / v) * MAX_V; n.vy = (n.vy / v) * MAX_V; }
 		n.x += n.vx;
 		n.y += n.vy;
+		if (graph3DMode) {
+			n.vz = ((n.vz || 0) + (n.fz || 0) - (n.z || 0) * GRAVITY) * DAMP;
+			if (Math.abs(n.vz) > MAX_V) n.vz = Math.sign(n.vz) * MAX_V;
+			n.z = (n.z || 0) + n.vz;
+		}
 	}
 
 	renderGraph();
@@ -267,47 +313,28 @@ function renderGraph() {
 	const isc = 1 / scale;
 	root.setAttribute("transform", `translate(${tx},${ty}) scale(${scale})`);
 
-	// Parent-child links
+	// Cache 3D projections once per frame
+	const projCache = {};
+	if (graph3DMode) {
+		for (const id in graphNodes) {
+			const n = graphNodes[id];
+			projCache[id] = project3D(n.x, n.y, n.z || 0);
+		}
+	}
+	const proj = (id) => {
+		const n = graphNodes[id];
+		if (!n) return null;
+		if (graph3DMode) {
+			const p = projCache[id];
+			return p ? { x: p.px, y: p.py, w: p.w, depth: p.depth } : null;
+		}
+		return { x: n.x, y: n.y, w: 1, depth: 0 };
+	};
+
 	const nameToId = {};
 	for (const id in state.territories) nameToId[state.territories[id].name] = id;
-	for (const id in state.territories) {
-		const t = state.territories[id];
-		const parent = getParent(t);
-		if (!parent) continue;
-		const pid = nameToId[parent.name];
-		const a = graphNodes[id], b = pid && graphNodes[pid];
-		if (!a || !b) continue;
-		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-		line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
-		line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
-		line.setAttribute("class", "gedge-parent");
-		line.setAttribute("stroke-width", 1.8 * isc);
-		line.setAttribute("stroke-dasharray", `${3 * isc} ${3 * isc}`);
-		root.appendChild(line);
-	}
 
-	for (const e of state.edges) {
-		const a = graphNodes[e.a], b = graphNodes[e.b];
-		if (!a || !b) continue;
-		const type = e.type || "both";
-		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-		line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
-		line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
-		line.setAttribute("class", "gedge");
-		line.setAttribute("stroke-width", 2.5 * isc);
-		if (type === "army") {
-			line.setAttribute("stroke", "#a06030");
-			line.setAttribute("stroke-dasharray", `${6 * isc} ${4 * isc}`);
-		} else if (type === "fleet") {
-			line.setAttribute("stroke", "#2060b0");
-			line.setAttribute("stroke-dasharray", `${2 * isc} ${3 * isc}`);
-		} else {
-			line.setAttribute("stroke", "#333");
-		}
-		line.setAttribute("opacity", "0.7");
-		root.appendChild(line);
-	}
-
+	// Degree map
 	const degreeMap = {};
 	let degMin = Infinity, degMax = -Infinity;
 	if (graphShowDegree) {
@@ -322,9 +349,40 @@ function renderGraph() {
 		}
 	}
 
-	for (const id in graphNodes) {
+	// Rendering helpers
+	const appendParentEdge = (pa, pb) => {
+		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+		line.setAttribute("x1", pa.x); line.setAttribute("y1", pa.y);
+		line.setAttribute("x2", pb.x); line.setAttribute("y2", pb.y);
+		line.setAttribute("class", "gedge-parent");
+		line.setAttribute("stroke-width", 1.8 * isc);
+		line.setAttribute("stroke-dasharray", `${3 * isc} ${3 * isc}`);
+		root.appendChild(line);
+	};
+
+	const appendEdge = (e, pa, pb) => {
+		const type = e.type || "both";
+		const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+		line.setAttribute("x1", pa.x); line.setAttribute("y1", pa.y);
+		line.setAttribute("x2", pb.x); line.setAttribute("y2", pb.y);
+		line.setAttribute("class", "gedge");
+		line.setAttribute("stroke-width", 2.5 * isc);
+		if (type === "army") {
+			line.setAttribute("stroke", "#a06030");
+			line.setAttribute("stroke-dasharray", `${6 * isc} ${4 * isc}`);
+		} else if (type === "fleet") {
+			line.setAttribute("stroke", "#2060b0");
+			line.setAttribute("stroke-dasharray", `${2 * isc} ${3 * isc}`);
+		} else {
+			line.setAttribute("stroke", "#333");
+		}
+		line.setAttribute("opacity", "0.7");
+		root.appendChild(line);
+	};
+
+	const appendNode = (id, p) => {
 		const t = state.territories[id];
-		if (!t) continue;
+		if (!t) return;
 		const n = graphNodes[id];
 		const R = 13 * isc;
 		const typeColor = t.type === "sea" ? "var(--accent-2)" : "var(--rule)";
@@ -335,7 +393,9 @@ function renderGraph() {
 		g.setAttribute("class", "gnode" +
 			(n.anchored ? " anchored" : "") +
 			(graphDrag && graphDrag.id === id ? " dragging" : ""));
-		g.setAttribute("transform", `translate(${n.x},${n.y})`);
+		g.setAttribute("transform", graph3DMode
+			? `translate(${p.x},${p.y}) scale(${p.w})`
+			: `translate(${p.x},${p.y})`);
 		g.dataset.id = id;
 
 		const hit = document.createElementNS("http://www.w3.org/2000/svg", "circle");
@@ -411,6 +471,64 @@ function renderGraph() {
 		}
 
 		root.appendChild(g);
+	};
+
+	if (graph3DMode) {
+		// Build a combined draw list of edges and nodes, sort together by depth.
+		// Edges use their closest endpoint depth so that an edge whose both ends
+		// are closer than a node will always paint on top of that node.
+		const items = [];
+
+		for (const id in state.territories) {
+			const t = state.territories[id];
+			const parent = getParent(t);
+			if (!parent) continue;
+			const pid = nameToId[parent.name];
+			const pa = proj(id), pb = pid && proj(pid);
+			if (!pa || !pb) continue;
+			items.push({ kind: 'pedge', pa, pb, depth: Math.min(pa.depth, pb.depth) });
+		}
+
+		for (const e of state.edges) {
+			const pa = proj(e.a), pb = proj(e.b);
+			if (!pa || !pb) continue;
+			items.push({ kind: 'edge', e, pa, pb, depth: Math.min(pa.depth, pb.depth) });
+		}
+
+		for (const id in graphNodes) {
+			const p = proj(id);
+			if (!p || !state.territories[id]) continue;
+			items.push({ kind: 'node', id, p, depth: p.depth });
+		}
+
+		items.sort((a, b) => b.depth - a.depth);
+
+		for (const item of items) {
+			if (item.kind === 'pedge') appendParentEdge(item.pa, item.pb);
+			else if (item.kind === 'edge') appendEdge(item.e, item.pa, item.pb);
+			else appendNode(item.id, item.p);
+		}
+	} else {
+		// 2D: edges always behind nodes
+		for (const id in state.territories) {
+			const t = state.territories[id];
+			const parent = getParent(t);
+			if (!parent) continue;
+			const pid = nameToId[parent.name];
+			const pa = proj(id), pb = pid && proj(pid);
+			if (!pa || !pb) continue;
+			appendParentEdge(pa, pb);
+		}
+		for (const e of state.edges) {
+			const pa = proj(e.a), pb = proj(e.b);
+			if (!pa || !pb) continue;
+			appendEdge(e, pa, pb);
+		}
+		for (const id in graphNodes) {
+			const p = proj(id);
+			if (!p) continue;
+			appendNode(id, p);
+		}
 	}
 
 	svg.appendChild(root);
@@ -428,6 +546,19 @@ function svgToGraph(clientX, clientY) {
 function onGraphMouseDown(e) {
 	if (e.button !== 0) return;
 	e.preventDefault();
+
+	if (graph3DMode) {
+		// In 3D mode: any drag orbits the scene; record clicked node for click detection
+		const g = e.target.closest(".gnode");
+		graph3DOrbit = {
+			startX: e.clientX, startY: e.clientY,
+			startRx: graph3DCamera.rx, startRy: graph3DCamera.ry,
+			clickedId: g ? g.dataset.id : null,
+		};
+		if (!graphSim.running) renderGraph();
+		return;
+	}
+
 	const g = e.target.closest(".gnode");
 	if (g) {
 		const id = g.dataset.id;
@@ -450,7 +581,13 @@ function onGraphMouseDown(e) {
 }
 
 function onGraphMouseMove(e) {
-	if (graphDrag) {
+	if (graph3DOrbit) {
+		const dx = e.clientX - graph3DOrbit.startX;
+		const dy = e.clientY - graph3DOrbit.startY;
+		graph3DCamera.ry = graph3DOrbit.startRy - dx * 0.005;
+		graph3DCamera.rx = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, graph3DOrbit.startRx + dy * 0.005));
+		if (!graphSim.running) renderGraph();
+	} else if (graphDrag) {
 		const n = graphNodes[graphDrag.id];
 		if (!n) return;
 		const pos = svgToGraph(e.clientX, e.clientY);
@@ -464,7 +601,20 @@ function onGraphMouseMove(e) {
 	}
 }
 
-function onGraphMouseUp() {
+function onGraphMouseUp(e) {
+	if (graph3DOrbit) {
+		// Small movement = click → toggle anchor on the node that was under the cursor
+		if (e) {
+			const dx = e.clientX - graph3DOrbit.startX;
+			const dy = e.clientY - graph3DOrbit.startY;
+			if (dx * dx + dy * dy < 25 && graph3DOrbit.clickedId) {
+				const n = graphNodes[graph3DOrbit.clickedId];
+				if (n) n.anchored = !n.anchored;
+			}
+		}
+		graph3DOrbit = null;
+		saveState();
+	}
 	if (graphDrag) {
 		const n = graphNodes[graphDrag.id];
 		if (n) {
@@ -507,7 +657,9 @@ function sectionGraphControls() {
 	const s = el("div", "sb-section");
 	s.appendChild(el("h3", null, "Graph View"));
 
-	const desc = el("div", "hint", "Outer hull nodes are anchored (dashed ring). Click any node to toggle. Drag to move.");
+	const desc = el("div", "hint", graph3DMode
+		? "Drag anywhere to orbit · Scroll to zoom · Click node to toggle anchor."
+		: "Outer hull nodes are anchored (dashed ring). Click any node to toggle. Drag to move.");
 	desc.style.marginBottom = "14px";
 	s.appendChild(desc);
 
@@ -517,7 +669,7 @@ function sectionGraphControls() {
 	btnReset.onclick = () => {
 		syncGraphNodes(true);
 		graphRestLen = computeAvgEdgeDist() * graphTensionFactor;
-		pinHullNodes();
+		if (!graph3DMode) pinHullNodes();
 		fitGraphToScreen();
 		if (!graphSim.running) startGraphSim();
 		else renderGraph();
@@ -534,6 +686,43 @@ function sectionGraphControls() {
 		btnPause.textContent = graphSim.running ? "Pause Simulation" : "Resume Simulation";
 	};
 	s.appendChild(btnPause);
+
+	// 3D mode toggle
+	const modeRow = el("div");
+	modeRow.style.cssText = "display:flex; align-items:center; gap:6px; margin-top:10px;";
+	const modeChk = el("input");
+	modeChk.type = "checkbox";
+	modeChk.id = "chk-3d";
+	modeChk.checked = graph3DMode;
+	modeChk.addEventListener("change", () => {
+		graph3DMode = modeChk.checked;
+		if (graph3DMode) {
+			saveNodesToStore(graphNodes2DSave);
+			if (Object.keys(graphNodes3DSave).length > 0) {
+				restoreNodesFromStore(graphNodes3DSave);
+			} else {
+				// First time entering 3D: keep XY layout, seed z
+				for (const id in graphNodes) {
+					graphNodes[id].z = (Math.random() - 0.5) * 30;
+					graphNodes[id].vz = 0;
+					graphNodes[id].anchored = false;
+				}
+			}
+		} else {
+			saveNodesToStore(graphNodes3DSave);
+			restoreNodesFromStore(graphNodes2DSave);
+		}
+		fitGraphToScreen();
+		renderGraph();
+		renderSidebar();
+		saveState();
+	});
+	const modeLbl = el("label", null, "3D mode");
+	modeLbl.setAttribute("for", "chk-3d");
+	modeLbl.style.cursor = "pointer";
+	modeRow.appendChild(modeChk);
+	modeRow.appendChild(modeLbl);
+	s.appendChild(modeRow);
 
 	const sliderWrap = el("div", "field");
 	sliderWrap.style.marginTop = "14px";
