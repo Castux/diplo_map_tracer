@@ -579,10 +579,23 @@ function sectionGraphControls() {
 	repWrap.appendChild(repSlider);
 	s.appendChild(repWrap);
 
-	const nT = Object.keys(state.territories).length;
+	const territories = Object.values(state.territories);
+	const nNodes = territories.length;
+	const parents = territories.filter(t => !isSubprovince(t));
+	const nTerr = parents.length;
+	const nLand = parents.filter(t => t.type === "land").length;
+	const nCoast = parents.filter(t => t.type === "coast").length;
+	const nSea = parents.filter(t => t.type === "sea").length;
+	const nSC = parents.filter(t => t.sc).length;
+	const nOwnedSC = parents.filter(t => t.sc && t.owner && t.owner !== "neutral").length;
+	const nNeutralSC = nSC - nOwnedSC;
+	const scPct = (nLand + nCoast) > 0 ? Math.round(nSC / (nLand + nCoast) * 100) : 0;
 	const nE = state.edges.length;
-	const stats = el("div", "hint", `${nT} nodes · ${nE} edges`);
+	const nodeNote = nNodes !== nTerr ? ` (${nNodes} nodes)` : "";
+	const scDetail = nSC > 0 ? `${nOwnedSC} owned · ${nNeutralSC} neutral` : "";
+	const stats = el("div", "hint", `${nTerr} territories${nodeNote}: ${nLand} land · ${nCoast} coast · ${nSea} sea\n${nSC} supply centers (${scPct}%): ${scDetail}\n${nE} edges`);
 	stats.style.marginTop = "10px";
+	stats.style.whiteSpace = "pre";
 	s.appendChild(stats);
 
 	const degRow = el("div");
