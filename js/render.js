@@ -29,6 +29,7 @@ function fitToScreen() {
 	const sx = (wrap.clientWidth - pad * 2) / state.imageW;
 	const sy = (wrap.clientHeight - pad * 2) / state.imageH;
 	const s = Math.min(sx, sy, 1);
+	if (s <= 0) return;
 	state.viewport.scale = s;
 	state.viewport.tx = (wrap.clientWidth - state.imageW * s) / 2;
 	state.viewport.ty = (wrap.clientHeight - state.imageH * s) / 2;

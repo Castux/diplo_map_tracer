@@ -40,6 +40,7 @@ function setMode(m) {
 			stopGraphSim();
 			document.getElementById("graph-view").style.display = "none";
 			document.getElementById("canvas-wrap").style.display = "";
+			if (state.viewport.scale <= 0) fitToScreen();
 		}
 		renderOverlay();
 	}

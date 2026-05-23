@@ -296,7 +296,9 @@ kbd {
 .marker {
 	cursor: pointer;
 }
-.marker circle.m-dot {
+.marker circle.m-dot,
+.marker rect.m-dot,
+.marker polygon.m-dot {
 	stroke: #111;
 	stroke-width: 1.4;
 }
@@ -310,7 +312,9 @@ kbd {
 .marker.selected circle.m-halo {
 	opacity: 1;
 }
-.marker.hover circle.m-dot {
+.marker.hover circle.m-dot,
+.marker.hover rect.m-dot,
+.marker.hover polygon.m-dot {
 	stroke-width: 2.2;
 }
 .marker text.m-label {
